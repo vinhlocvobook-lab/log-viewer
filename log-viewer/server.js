@@ -12,7 +12,7 @@ const SESSION_DIR = process.env.SESSION_DIR;
 
 const db = new Database('logs.db');
 
-// Updated schema for multi-session support
+// Multi-session schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS project_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +49,7 @@ db.exec(`
   );
 `);
 
-// Migration: Add session_id column if it doesn't exist
+// Migration: Ensure session_id column exists
 try {
     db.prepare("SELECT session_id FROM llm_interactions LIMIT 1").get();
 } catch (e) {
@@ -57,7 +57,7 @@ try {
 }
 
 function syncLogs() {
-    console.log('Syncing logs (Multi-Session)...');
+    console.log('Syncing logs (Multi-Session Patch)...');
     
     try {
         // 1. Sync Project Log
@@ -82,10 +82,13 @@ function syncLogs() {
                 const label = session.origin?.label || key;
                 insertSession.run(sid, label, new Date(session.updatedAt).toISOString());
 
-                // Sync the specific session file
+                // Legacy Patch: If we have logs tagged as 'main', move them to the real active session ID
+                if (key === "agent:main:main") {
+                    db.prepare("UPDATE llm_interactions SET session_id = ? WHERE session_id = 'main'").run(sid);
+                }
+
                 syncSessionFile(sid, session.sessionFile);
                 
-                // If it's the main session, update usage history
                 if (key === "agent:main:main") {
                     const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
                     if (!last || last.total_tokens !== session.totalTokens) {
@@ -106,10 +109,14 @@ function syncSessionFile(sid, sessionFile) {
         const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
         const stats = fs.statSync(sessionFile);
         
-        if (stats.size > lastOffset) {
+        // If file was truncated or rotated, reset offset
+        let startOffset = lastOffset;
+        if (stats.size < lastOffset) startOffset = 0;
+
+        if (stats.size > startOffset) {
             const fd = fs.openSync(sessionFile, 'r');
-            const buffer = Buffer.alloc(stats.size - lastOffset);
-            fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
+            const buffer = Buffer.alloc(stats.size - startOffset);
+            fs.readSync(fd, buffer, 0, buffer.length, startOffset);
             fs.closeSync(fd);
 
             const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
@@ -224,5 +231,5 @@ syncLogs();
 setInterval(syncLogs, 15000); 
 
 app.listen(PORT, () => {
-    console.log(`Multi-Session Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Log Viewer API ready at http://localhost:${PORT}`);
 });

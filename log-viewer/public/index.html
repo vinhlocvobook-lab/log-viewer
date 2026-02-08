@@ -83,7 +83,7 @@
                 <!-- Timeline -->
                 <section class="xl:col-span-4">
                     <h2 class="text-[10px] uppercase tracking-widest font-black mb-6 text-blue-500 border-b border-blue-900/30 pb-2">Project Milestones</h2>
-                    <div id="project-log" class="prose prose-invert prose-xs max-w-none text-gray-400 leading-relaxed">
+                    <div id="project-log" class="prose prose-invert prose-xs max-w-none text-gray-400 leading-relaxed text-[11px]">
                         Loading...
                     </div>
                 </section>
@@ -146,8 +146,9 @@
 
         function updateChart(history) {
             const data = history.map(h => h.total_tokens);
+            const labels = history.map(h => "");
             if (usageChart) {
-                usageChart.data.labels = history.map(h => "");
+                usageChart.data.labels = labels;
                 usageChart.data.datasets[0].data = data;
                 usageChart.update('none');
                 return;
@@ -156,7 +157,7 @@
             usageChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: history.map(h => ""),
+                    labels: labels,
                     datasets: [{
                         data: data,
                         borderColor: '#3b82f6',
@@ -185,6 +186,8 @@
             
             if (!currentSessionId && sessions.length > 0) {
                 currentSessionId = sessions[0].id;
+                document.getElementById('active-session-label').textContent = sessions[0].label;
+                document.getElementById('active-session-id').textContent = sessions[0].id;
             }
 
             sessionList.innerHTML = sessions.map(s => `
@@ -238,7 +241,7 @@
                     if (msg.role === 'assistant') { label = "🤖 RESPONSE"; labelColor = "text-purple-500"; }
 
                     return `
-                        <div class="p-6 rounded-3xl border ${roleClass} transition-all hover:border-gray-700">
+                        <div class="p-6 rounded-3xl border ${roleClass} transition-all hover:border-gray-700 shadow-sm">
                             <div class="flex justify-between items-center mb-4">
                                 <span class="text-[8px] uppercase font-black tracking-[0.2em] ${labelColor}">${label}</span>
                                 <span class="text-[8px] text-gray-700 font-mono tracking-tighter">${new Date(msg.timestamp).toLocaleString()}</span>
@@ -251,6 +254,7 @@
                 mainContent.style.display = 'block';
                 authModal.style.display = 'none';
             } catch (e) {
+                console.error(e);
                 authModal.style.display = 'flex';
                 mainContent.style.display = 'none';
             }
