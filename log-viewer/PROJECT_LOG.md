@@ -23,10 +23,6 @@ This file tracks the development milestones, commands, and architectural decisio
 ### 🛡️ Scaling & Hardening
 - **Task:** Improve reliability and security.
 - **Branch:** `feat/hardening-and-scaling`
-- **Improvements:**
-  - **Dynamic Discovery:** System now automatically finds the active session file.
-  - **Incremental Sync:** Replaced full-file reads with offset-based streaming for performance.
-  - **Auth Shield:** Added an mandatory Access Key to protect log data.
 - **Result:** Enterprise-grade logging system ready for large session files.
 
 ### 🛠️ Rich Content Parsing
@@ -34,7 +30,15 @@ This file tracks the development milestones, commands, and architectural decisio
 - **Branch:** `feat/rich-parsing`
 - **Result:** Full transparency into what the AI is "thinking" and what commands it is running.
 
-### 🔒 Security & Source Control Fix
-- **Task:** Remove sensitive `.env` file from GitHub history.
-- **Decision:** Untracked `.env` using `git rm --cached` and provided `.env.example` for setup.
-- **Result:** Secrets are no longer pushed to the repository.
+### 🔒 Security Fix (GitHub)
+- **Task:** Remove sensitive `.env` file from tracking.
+- **Decision:** Used `.env.example` and updated `.gitignore`.
+
+### 📈 Usage Analytics & Dashboard
+- **Task:** Add visual analytics for token tracking.
+- **Branch:** `feat/usage-analytics`
+- **Improvements:**
+  - **Time-Series Tracking:** Added `usage_history` table to store periodic token snapshots.
+  - **Visualization:** Integrated **Chart.js** to display token growth trends.
+  - **UI Overhaul:** Redesigned the dashboard with a focus on metrics and readability.
+- **Result:** Professional dashboard providing both raw logs and strategic usage insights.

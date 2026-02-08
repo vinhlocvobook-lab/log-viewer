@@ -27,6 +27,14 @@ db.exec(`
     timestamp DATETIME
   );
 
+  CREATE TABLE IF NOT EXISTS usage_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    total_tokens INTEGER,
+    input_tokens INTEGER,
+    output_tokens INTEGER
+  );
+
   CREATE TABLE IF NOT EXISTS sync_state (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -42,9 +50,9 @@ function getActiveSessionPath() {
 }
 
 function syncLogs() {
-    console.log('Syncing logs (Transparency Update)...');
+    console.log('Syncing logs (Analytics Update)...');
     
-    // 1. Project Log
+    // 1. Sync Project Log
     try {
         const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
         const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
@@ -55,7 +63,20 @@ function syncLogs() {
         }
     } catch (e) { console.error('Project log sync failed', e); }
 
-    // 2. Incremental Sync
+    // 2. Sync Usage History
+    try {
+        const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
+        const session = data["agent:main:main"];
+        if (session) {
+            const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
+            if (!last || last.total_tokens !== session.totalTokens) {
+                db.prepare('INSERT INTO usage_history (total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?)')
+                  .run(session.totalTokens, session.inputTokens, session.outputTokens);
+            }
+        }
+    } catch (e) { console.error('Usage sync failed', e); }
+
+    // 3. Incremental Sync
     const sessionFile = getActiveSessionPath();
     if (!sessionFile || !fs.existsSync(sessionFile)) return;
 
@@ -71,11 +92,7 @@ function syncLogs() {
             fs.closeSync(fd);
 
             const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
-            
-            const insertInteraction = db.prepare(`
-                INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            `);
+            const insertInteraction = db.prepare(`INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp) VALUES (?, ?, ?, ?, ?)`);
 
             const transaction = db.transaction((logLines) => {
                 for (const line of logLines) {
@@ -98,13 +115,7 @@ function syncLogs() {
                         }
 
                         if (role !== 'unknown') {
-                            insertInteraction.run(
-                                item.id || `evt-${item.timestamp}-${Math.random()}`,
-                                role,
-                                JSON.stringify(contentArr),
-                                tokens,
-                                item.timestamp
-                            );
+                            insertInteraction.run(item.id || `evt-${item.timestamp}-${Math.random()}`, role, JSON.stringify(contentArr), tokens, item.timestamp);
                         }
                     } catch (e) { /* skip */ }
                 }
@@ -133,12 +144,16 @@ app.get('/api/logs/usage', checkAuth, (req, res) => {
     try {
         const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
         const session = data["agent:main:main"];
+        const history = db.prepare('SELECT * FROM usage_history ORDER BY timestamp ASC LIMIT 100').all();
         res.json({
-            model: session.model,
-            totalTokens: session.totalTokens,
-            inputTokens: session.inputTokens,
-            outputTokens: session.outputTokens,
-            systemPrompt: session.systemPromptReport?.systemPrompt?.text || "No system prompt found."
+            current: {
+                model: session.model,
+                totalTokens: session.totalTokens,
+                inputTokens: session.inputTokens,
+                outputTokens: session.outputTokens,
+                systemPrompt: session.systemPromptReport?.systemPrompt?.text || ""
+            },
+            history: history
         });
     } catch (e) { res.status(500).json({ error: 'Read error' }); }
 });
@@ -154,14 +169,13 @@ app.get('/api/logs/llm', checkAuth, (req, res) => {
     }
     query += ' ORDER BY timestamp DESC LIMIT ?';
     params.push(limit);
-    
     const rows = db.prepare(query).all(...params);
     res.json(rows.map(r => ({ ...r, content: JSON.parse(r.content_json || '[]') })));
 });
 
 syncLogs();
-setInterval(syncLogs, 15000); 
+setInterval(syncLogs, 30000); 
 
 app.listen(PORT, () => {
-    console.log(`Transparency Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Analytics Log Viewer API running at http://localhost:${PORT}`);
 });
