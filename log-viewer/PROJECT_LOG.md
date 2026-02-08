@@ -23,6 +23,10 @@ This file tracks the development milestones, commands, and architectural decisio
 ### 🛡️ Scaling & Hardening
 - **Task:** Improve reliability and security.
 - **Branch:** `feat/hardening-and-scaling`
+- **Improvements:**
+  - **Dynamic Discovery:** System now automatically finds the active session file.
+  - **Incremental Sync:** Replaced full-file reads with offset-based streaming for performance.
+  - **Auth Shield:** Added an mandatory Access Key to protect log data.
 - **Result:** Enterprise-grade logging system ready for large session files.
 
 ### 🛠️ Rich Content Parsing
@@ -42,3 +46,8 @@ This file tracks the development milestones, commands, and architectural decisio
   - **Visualization:** Integrated **Chart.js** to display token growth trends.
   - **UI Overhaul:** Redesigned the dashboard with a focus on metrics and readability.
 - **Result:** Professional dashboard providing both raw logs and strategic usage insights.
+
+### 🩹 Reliability & UI Patch
+- **Task:** Fix frontend JavaScript crashes and sync normalization.
+- **Decision:** Fixed a ReferenceError in `updateChart` (`r.timestamp` -> `h.timestamp`) and improved the server-side normalization of `toolResult` messages.
+- **Result:** Dashboard is now stable and correctly highlights tool outputs in green.
