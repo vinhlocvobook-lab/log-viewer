@@ -51,3 +51,8 @@ This file tracks the development milestones, commands, and architectural decisio
   - **Relational Data:** Updated SQLite schema to link logs to specific `session_id`s.
   - **Background Worker Visibility:** The sync engine now tracks every `.jsonl` file registered in the system.
 - **Result:** Unified observability for complex, multi-agent coding tasks.
+
+### 🩹 Data Integrity Patch (Multi-Session)
+- **Task:** Restore previous logs that were "lost" during the session ID migration.
+- **Decision:** Implemented a database migration script to re-tag logs from the generic 'main' ID to the actual session UUID.
+- **Result:** All historical logs are now visible again in the sidebar under the correct session.
