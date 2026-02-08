@@ -3,51 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DevFriend Log Viewer (Rich)</title>
+    <title>DevFriend Log Viewer (Transparency)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .thinking-block { border-left: 3px solid #4b5563; font-style: italic; color: #9ca3af; }
-        .tool-call { background: #1e1b4b; border: 1px solid #312e81; font-family: monospace; }
-        .tool-result { background: #064e3b; border: 1px solid #065f46; font-family: monospace; }
+        .thinking-block { border-left: 3px solid #4b5563; font-style: italic; color: #9ca3af; margin: 10px 0; }
+        .tool-call { background: #1e1b4b; border: 1px solid #312e81; font-family: monospace; padding: 10px; border-radius: 8px; margin: 10px 0; }
+        .tool-result { background: #064e3b; border: 1px solid #065f46; font-family: monospace; padding: 10px; border-radius: 8px; margin: 10px 0; color: #10b981; }
+        .system-event { background: #451a03; border: 1px solid #78350f; color: #fbbf24; padding: 8px; border-radius: 8px; font-size: 0.75rem; margin: 10px 0; }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto flex justify-between items-center">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                📜 Log Viewer <span class="text-xs bg-purple-600 px-2 py-1 rounded">RICH PARSING</span>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+    <nav class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50 shadow-2xl">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-black flex items-center gap-2 tracking-tighter">
+                📜 DEV_LOGS <span class="text-[10px] bg-yellow-600 text-black px-2 py-0.5 rounded-full font-bold">TRANSPARENCY</span>
             </h1>
-            <div id="usage-stats" class="flex gap-4 text-sm text-gray-400"></div>
-            <button id="set-key-btn" class="text-xs text-gray-500 hover:text-white underline">Set Key</button>
+            <div id="usage-stats" class="flex gap-6 text-xs font-mono text-gray-400"></div>
+            <div class="flex gap-4">
+                <button id="show-system-btn" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition">System Prompt</button>
+                <button id="set-key-btn" class="text-xs text-gray-500 hover:text-white underline">Logout</button>
+            </div>
         </div>
     </nav>
 
-    <main id="main-content" class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8" style="display:none;">
-        <!-- Left: Audit Log -->
-        <section>
-            <h2 class="text-lg font-semibold mb-4 text-blue-400">Project Audit Log</h2>
-            <div id="project-log" class="bg-gray-800 p-6 rounded-xl border border-gray-700 overflow-y-auto max-h-[800px] prose prose-invert max-w-none">
-                Loading...
+    <!-- System Prompt Modal -->
+    <div id="system-modal" class="fixed inset-0 bg-black/90 hidden items-center justify-center z-[200] p-10">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-4xl max-h-full flex flex-column overflow-hidden shadow-2xl">
+            <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800/50">
+                <h2 class="font-bold text-blue-400">Current System Instructions (The "Brain")</h2>
+                <button onclick="document.getElementById('system-modal').style.display='none'" class="text-gray-400 hover:text-white">&times; Close</button>
+            </div>
+            <div id="system-content" class="p-8 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap text-gray-300"></div>
+        </div>
+    </div>
+
+    <main id="main-content" class="max-w-7xl mx-auto p-6 grid grid-cols-1 xl:grid-cols-12 gap-8" style="display:none;">
+        <!-- Left: Audit Log (4 cols) -->
+        <section class="xl:col-span-4">
+            <h2 class="text-sm uppercase tracking-widest font-bold mb-4 text-blue-500">Project Timeline</h2>
+            <div id="project-log" class="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 overflow-y-auto max-h-[85vh] prose prose-invert prose-sm max-w-none shadow-inner">
+                Loading history...
             </div>
         </section>
 
-        <!-- Right: Interactive LLM Log -->
-        <section>
+        <!-- Right: Interactive LLM Log (8 cols) -->
+        <section class="xl:col-span-8">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-lg font-semibold text-purple-400">Message Streams</h2>
-                <input type="text" id="search-box" placeholder="Search content..." class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm focus:outline-none focus:border-purple-500">
+                <h2 class="text-sm uppercase tracking-widest font-bold text-purple-500">Live AI Stream</h2>
+                <input type="text" id="search-box" placeholder="Filter interactions..." class="bg-gray-800 border border-gray-700 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all w-64">
             </div>
-            <div id="llm-log" class="space-y-6 overflow-y-auto max-h-[800px] pr-2">
-                Loading...
+            <div id="llm-log" class="space-y-6 overflow-y-auto max-h-[85vh] pr-4 custom-scrollbar">
+                Initializing feed...
             </div>
         </section>
     </main>
 
-    <div id="auth-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]" style="display:none;">
-        <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 w-80">
-            <h3 class="text-lg font-bold mb-4 text-center">🔐 Security Key</h3>
-            <input type="password" id="access-key-input" placeholder="Enter access key..." class="w-full bg-gray-900 border border-gray-700 rounded p-2 mb-4">
-            <button id="save-key-btn" class="w-full bg-blue-600 hover:bg-blue-500 p-2 rounded font-bold transition">Unlock Dashboard</button>
+    <div id="auth-modal" class="fixed inset-0 bg-gray-950 flex items-center justify-center z-[100]" style="display:none;">
+        <div class="bg-gray-900 p-10 rounded-3xl border border-gray-800 w-96 shadow-2xl">
+            <div class="text-4xl mb-6 text-center">🔐</div>
+            <h3 class="text-xl font-black mb-2 text-center">Secure Access</h3>
+            <p class="text-gray-500 text-xs text-center mb-8">Enter your project access key to continue</p>
+            <input type="password" id="access-key-input" placeholder="••••••••" class="w-full bg-black border border-gray-800 rounded-xl p-4 mb-6 text-center tracking-widest focus:border-blue-600 outline-none transition-all">
+            <button id="save-key-btn" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-black uppercase tracking-widest transition-all transform hover:scale-[1.02] active:scale-95 shadow-lg shadow-blue-900/20">Authorize</button>
         </div>
     </div>
 
@@ -56,35 +73,17 @@
         const searchBox = document.getElementById('search-box');
         const authModal = document.getElementById('auth-modal');
         const mainContent = document.getElementById('main-content');
+        const systemModal = document.getElementById('system-modal');
         let currentSearch = '';
+        let lastSystemPrompt = '';
 
-        function getHeaders() {
-            return { 'x-access-key': localStorage.getItem('log_access_key') };
-        }
+        function getHeaders() { return { 'x-access-key': localStorage.getItem('log_access_key') }; }
 
         function renderContent(item) {
-            if (item.type === 'text') {
-                return `<div class="text-sm leading-relaxed">${marked.parse(item.text)}</div>`;
-            }
-            if (item.type === 'thinking') {
-                return `<div class="thinking-block pl-4 my-2 text-xs">${marked.parse(item.thinking)}</div>`;
-            }
-            if (item.type === 'toolCall') {
-                return `
-                    <div class="tool-call p-3 rounded-md my-2">
-                        <div class="text-[10px] text-indigo-300 font-bold mb-1 uppercase tracking-tighter">Tool Call: ${item.name}</div>
-                        <div class="text-xs text-indigo-100">${JSON.stringify(item.arguments, null, 2)}</div>
-                    </div>
-                `;
-            }
-            if (item.type === 'toolResult') {
-                return `
-                    <div class="tool-result p-3 rounded-md my-2">
-                        <div class="text-[10px] text-green-300 font-bold mb-1 uppercase tracking-tighter">Tool Result: ${item.toolName}</div>
-                        <div class="text-xs text-green-500 truncate">${item.text}</div>
-                    </div>
-                `;
-            }
+            if (item.type === 'text') return `<div class="text-sm leading-relaxed text-gray-200">${marked.parse(item.text)}</div>`;
+            if (item.type === 'thinking') return `<div class="thinking-block pl-4 text-xs">${marked.parse(item.thinking)}</div>`;
+            if (item.type === 'toolCall') return `<div class="tool-call"><div class="text-[9px] text-blue-400 font-black mb-2 tracking-widest uppercase">CALL: ${item.name}</div><pre class="text-[11px] text-blue-100 overflow-x-auto">${JSON.stringify(item.arguments, null, 2)}</pre></div>`;
+            if (item.type === 'toolResult') return `<div class="tool-result"><div class="text-[9px] text-green-400 font-black mb-2 tracking-widest uppercase">RESULT: ${item.toolName}</div><div class="text-xs font-mono break-all">${item.text}</div></div>`;
             return '';
         }
 
@@ -97,9 +96,10 @@
                 if (usageRes.status === 403) throw new Error("Auth failed");
                 const usage = await usageRes.json();
                 document.getElementById('usage-stats').innerHTML = `
-                    <span>Model: <b>${usage.model}</b></span>
-                    <span>Usage: <b>${(usage.totalTokens/1000).toFixed(1)}k</b></span>
+                    <span>MODEL: ${usage.model}</span>
+                    <span>TOTAL_TOKENS: ${(usage.totalTokens/1000).toFixed(1)}k</span>
                 `;
+                lastSystemPrompt = usage.systemPrompt;
 
                 const projectRes = await fetch(`/api/logs/project`, { headers: getHeaders() });
                 const project = await projectRes.json();
@@ -108,19 +108,28 @@
                 const llmRes = await fetch(`/api/logs/llm?q=${encodeURIComponent(currentSearch)}`, { headers: getHeaders() });
                 const history = await llmRes.json();
                 
-                document.getElementById('llm-log').innerHTML = history.map(msg => `
-                    <div class="p-5 rounded-xl border ${msg.role === 'user' ? 'bg-gray-800 border-blue-900 shadow-lg' : msg.role === 'toolResult' ? 'bg-black/20 border-green-900' : 'bg-gray-800/50 border-gray-700'}">
-                        <div class="flex justify-between items-center mb-3">
-                            <span class="text-[10px] uppercase font-black tracking-widest ${msg.role === 'user' ? 'text-blue-400' : msg.role === 'toolResult' ? 'text-green-400' : 'text-purple-400'}">
-                                ${msg.role}
-                            </span>
-                            <span class="text-[10px] text-gray-600 font-mono">${new Date(msg.timestamp).toLocaleTimeString()}</span>
+                document.getElementById('llm-log').innerHTML = history.map(msg => {
+                    let roleClass = "border-gray-800 bg-gray-800/30";
+                    let labelColor = "text-gray-500";
+                    
+                    if (msg.role === 'user') { roleClass = "border-blue-900/50 bg-blue-900/10 shadow-lg ring-1 ring-blue-500/20"; labelColor = "text-blue-400"; }
+                    if (msg.role === 'system') { roleClass = "border-yellow-900/50 bg-yellow-950/20"; labelColor = "text-yellow-500"; }
+                    if (msg.role === 'toolResult') { roleClass = "border-green-900/30 bg-green-950/10"; labelColor = "text-green-500"; }
+
+                    return `
+                        <div class="p-6 rounded-2xl border ${roleClass} transition-all hover:border-gray-600">
+                            <div class="flex justify-between items-center mb-4">
+                                <span class="text-[10px] uppercase font-black tracking-widest ${labelColor}">
+                                    ${msg.role === 'user' ? '👤 HUMAN_REQUEST' : msg.role === 'assistant' ? '🤖 AI_RESPONSE' : msg.role.toUpperCase()}
+                                </span>
+                                <span class="text-[10px] text-gray-600 font-mono italic">${new Date(msg.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div class="space-y-3">
+                                ${msg.content.map(renderContent).join('')}
+                            </div>
                         </div>
-                        <div class="space-y-2">
-                            ${msg.content.map(renderContent).join('')}
-                        </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
 
                 mainContent.style.display = 'grid';
                 authModal.style.display = 'none';
@@ -141,13 +150,18 @@
             location.reload();
         };
 
+        document.getElementById('show-system-btn').onclick = () => {
+            document.getElementById('system-content').textContent = lastSystemPrompt;
+            systemModal.style.display = 'flex';
+        };
+
         searchBox.addEventListener('input', (e) => {
             currentSearch = e.target.value;
             loadData();
         });
 
         loadData();
-        setInterval(loadData, 30000);
+        setInterval(loadData, 15000);
     </script>
 </body>
 </html>

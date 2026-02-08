@@ -14,25 +14,29 @@ The Log Viewer serves as an observability layer for the DevFriend AI Assistant. 
 
 ### 1. Ingestion / Sync Engine
 Instead of reading large text files on every user request, the server implements a **Sync Engine**:
-- It runs a background interval (every 60s).
+- It runs a background interval (every 15-30s).
 - It reads the source files and uses `INSERT OR IGNORE` logic to update a local SQLite database.
-- This ensures the UI remains fast even as logs grow to thousands of lines.
+- **Incremental Sync:** The engine uses file offsets to only read new data from `.jsonl` files, ensuring high performance even with massive logs.
+- **Rich Parsing:** Unlike simple text loggers, this engine parses full JSON objects to extract "Thinking" blocks, "Tool Calls", and "System Events".
 
 ### 2. SQLite Database (`logs.db`)
 - **Table: `project_logs`** - Stores the full content of the audit Markdown.
-- **Table: `llm_interactions`** - Stores individual message turns with indexed columns for role and timestamp.
+- **Table: `llm_interactions`** - Stores individual message turns with a `content_json` column for structured data storage.
+- **Table: `sync_state`** - Keeps track of file offsets for incremental syncing.
 
 ### 3. REST API
 - `GET /api/logs/project`: Returns the latest rendered audit log.
-- `GET /api/logs/llm?q=keyword`: Returns filtered interactions from the database.
-- `GET /api/logs/usage`: Proxies live metadata from the OpenClaw system.
+- `GET /api/logs/llm?q=keyword`: Returns rich structured data from the database.
+- `GET /api/logs/usage`: Proxies live metadata and the **Current System Prompt** from the OpenClaw system.
 
 ### 4. Frontend
-- Built with **Vanilla JS** to minimize dependencies.
-- Uses **Tailwind CSS** for a dark-mode "Production" aesthetic.
-- Implements **Live Search** which debounces API calls to the SQLite backend.
+- Built with **Vanilla JS** and **Tailwind CSS**.
+- **Transparency Features:**
+  - **System Prompt Viewer:** A dedicated modal to see the AI's core instructions.
+  - **Visual Coding:** Different styles for Human requests, AI responses, Tool execution, and System events.
+  - **Live Search:** Fast filtering powered by SQLite `LIKE` queries.
 
 ## Deployment Strategy
 The app is designed to run alongside the main application:
 - **Process Manager:** PM2 ensures the Node server is always up.
-- **Security:** Apache acts as a reverse proxy, isolating the Node process from direct web exposure.
+- **Security:** Apache acts as a reverse proxy. API access is gated by an `X-Access-Key` header.

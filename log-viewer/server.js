@@ -7,14 +7,11 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const ACCESS_KEY = process.env.ACCESS_KEY;
 
-// Paths from environment
 const PROJECT_LOG_PATH = process.env.PROJECT_LOG_PATH;
 const SESSION_DIR = process.env.SESSION_DIR;
 
-// Initialize SQLite DB
 const db = new Database('logs.db');
 
-// Create tables (Updated for rich content)
 db.exec(`
   CREATE TABLE IF NOT EXISTS project_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +22,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS llm_interactions (
     id TEXT PRIMARY KEY,
     role TEXT,
-    content_json TEXT, -- Stores the full content array as JSON
+    content_json TEXT,
     tokens INTEGER,
     timestamp DATETIME
   );
@@ -36,29 +33,18 @@ db.exec(`
   );
 `);
 
-// Migration: Add content_json if it doesn't exist
-const columns = db.prepare("PRAGMA table_info(llm_interactions)").all();
-if (!columns.find(c => c.name === 'content_json')) {
-    db.exec('ALTER TABLE llm_interactions ADD COLUMN content_json TEXT');
-}
-
-// Dynamic Discovery: Find the current active session file
 function getActiveSessionPath() {
     try {
         const sessionsJson = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
         const activeSession = sessionsJson["agent:main:main"];
-        if (activeSession && activeSession.sessionFile) {
-            return activeSession.sessionFile;
-        }
-    } catch (e) { console.error('Discovery failed', e); }
-    return null;
+        return activeSession?.sessionFile || null;
+    } catch (e) { return null; }
 }
 
-// Sync logic
 function syncLogs() {
-    console.log('Syncing logs (Rich Parsing)...');
+    console.log('Syncing logs (Transparency Update)...');
     
-    // 1. Sync Project Log
+    // 1. Project Log
     try {
         const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
         const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
@@ -69,9 +55,9 @@ function syncLogs() {
         }
     } catch (e) { console.error('Project log sync failed', e); }
 
-    // 2. Incremental Sync LLM Interactions
+    // 2. Incremental Sync
     const sessionFile = getActiveSessionPath();
-    if (!sessionFile) return;
+    if (!sessionFile || !fs.existsSync(sessionFile)) return;
 
     try {
         const stateKey = `offset:${sessionFile}`;
@@ -84,43 +70,47 @@ function syncLogs() {
             fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
             fs.closeSync(fd);
 
-            const newLines = buffer.toString('utf8').trim().split('\n').filter(l => l.trim());
+            const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
             
             const insertInteraction = db.prepare(`
                 INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp)
                 VALUES (?, ?, ?, ?, ?)
             `);
 
-            const transaction = db.transaction((lines) => {
-                for (const line of lines) {
+            const transaction = db.transaction((logLines) => {
+                for (const line of logLines) {
                     try {
                         const item = JSON.parse(line);
-                        if (item.type === 'message') {
-                            // Normalize content for display
-                            let contentArr = item.message.content || [];
-                            
-                            // If it's a tool result, wrap it into a readable format for the UI
-                            if (item.message.role === 'toolResult') {
-                                contentArr = [{
-                                    type: 'toolResult',
-                                    toolName: item.message.toolName,
-                                    text: item.message.content.find(c => c.type === 'text')?.text || "Success"
-                                }];
-                            }
+                        let role = 'unknown';
+                        let contentArr = [];
+                        let tokens = 0;
 
+                        if (item.type === 'message') {
+                            role = item.message.role;
+                            contentArr = item.message.content || [];
+                            tokens = item.message.usage?.totalTokens || 0;
+                        } else if (item.type === 'systemEvent') {
+                            role = 'system';
+                            contentArr = [{ type: 'text', text: item.text }];
+                        } else if (item.type === 'toolResult') {
+                            role = 'toolResult';
+                            contentArr = [{ type: 'toolResult', toolName: item.toolName, text: item.content?.[0]?.text || "Success" }];
+                        }
+
+                        if (role !== 'unknown') {
                             insertInteraction.run(
-                                item.id,
-                                item.message.role,
+                                item.id || `evt-${item.timestamp}-${Math.random()}`,
+                                role,
                                 JSON.stringify(contentArr),
-                                item.message.usage?.totalTokens || 0,
+                                tokens,
                                 item.timestamp
                             );
                         }
-                    } catch (e) { console.error('Line parse error', e); }
+                    } catch (e) { /* skip */ }
                 }
             });
 
-            transaction(newLines);
+            transaction(lines);
             db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
         }
     } catch (e) { console.error('LLM log sync failed', e); }
@@ -147,14 +137,15 @@ app.get('/api/logs/usage', checkAuth, (req, res) => {
             model: session.model,
             totalTokens: session.totalTokens,
             inputTokens: session.inputTokens,
-            outputTokens: session.outputTokens
+            outputTokens: session.outputTokens,
+            systemPrompt: session.systemPromptReport?.systemPrompt?.text || "No system prompt found."
         });
     } catch (e) { res.status(500).json({ error: 'Read error' }); }
 });
 
 app.get('/api/logs/llm', checkAuth, (req, res) => {
     const search = req.query.q || '';
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 100;
     let query = 'SELECT * FROM llm_interactions';
     const params = [];
     if (search) {
@@ -165,16 +156,12 @@ app.get('/api/logs/llm', checkAuth, (req, res) => {
     params.push(limit);
     
     const rows = db.prepare(query).all(...params);
-    const history = rows.map(r => ({
-        ...r,
-        content: JSON.parse(r.content_json || '[]')
-    }));
-    res.json(history);
+    res.json(rows.map(r => ({ ...r, content: JSON.parse(r.content_json || '[]') })));
 });
 
 syncLogs();
-setInterval(syncLogs, 30000); 
+setInterval(syncLogs, 15000); 
 
 app.listen(PORT, () => {
-    console.log(`Rich Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Transparency Log Viewer API running at http://localhost:${PORT}`);
 });

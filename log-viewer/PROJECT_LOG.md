@@ -32,8 +32,13 @@ This file tracks the development milestones, commands, and architectural decisio
 ### 🛠️ Rich Content Parsing
 - **Task:** Parse and display internal AI logic (Thinking, Tool Calls, Tool Results).
 - **Branch:** `feat/rich-parsing`
-- **Improvements:**
-  - **Content Serialization:** Database now stores full message structures as JSON.
-  - **UI Visualization:** Created specialized UI blocks for "Thinking" (italic/grey), "Tool Calls" (blue), and "Tool Results" (green).
-  - **Search scaling:** Search now queries across the entire serialized message content.
 - **Result:** Full transparency into what the AI is "thinking" and what commands it is running.
+
+### 🔍 Debug Transparency Update
+- **Task:** Expose user requests, system prompts, and background events.
+- **Branch:** `feat/debug-transparency`
+- **Improvements:**
+  - **Human Request Visibility:** Highlighted user messages in blue for easy scanning.
+  - **System Prompt Viewer:** Added a dedicated modal to see the AI's current instructions.
+  - **Event Support:** Now captures `systemEvent` (e.g. background tasks) and `toolResult` (raw output).
+- **Result:** Complete "end-to-end" visibility of the AI's context and conversation flow.
