@@ -1,14 +1,15 @@
+require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+const ACCESS_KEY = process.env.ACCESS_KEY;
 
-// Paths to the source logs
-const PROJECT_LOG_PATH = '/home/locvv/.openclaw/workspace/prod-todolist/PROJECT_LOG.md';
-const LLM_JSONL_PATH = '/home/locvv/.openclaw/agents/main/sessions/a5d6e76f-67e0-4c56-91b3-24004a56572f.jsonl';
-const SESSION_JSON_PATH = '/home/locvv/.openclaw/agents/main/sessions/sessions.json';
+// Paths from environment
+const PROJECT_LOG_PATH = process.env.PROJECT_LOG_PATH;
+const SESSION_DIR = process.env.SESSION_DIR;
 
 // Initialize SQLite DB
 const db = new Database('logs.db');
@@ -28,13 +29,39 @@ db.exec(`
     tokens INTEGER,
     timestamp DATETIME
   );
+
+  CREATE TABLE IF NOT EXISTS sync_state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
-// Sync logic: Pull from files into DB
-function syncLogs() {
-    console.log('Syncing logs to SQLite...');
+// Dynamic Discovery: Find the current active session file
+function getActiveSessionPath() {
+    try {
+        const sessionsJson = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
+        const activeSession = sessionsJson["agent:main:main"];
+        if (activeSession && activeSession.sessionFile) {
+            return activeSession.sessionFile;
+        }
+    } catch (e) {
+        console.error('Failed to discover active session via sessions.json');
+    }
     
-    // 1. Sync Project Log
+    // Fallback: most recently modified .jsonl file
+    const files = fs.readdirSync(SESSION_DIR)
+        .filter(f => f.endsWith('.jsonl'))
+        .map(f => ({ name: f, time: fs.statSync(path.join(SESSION_DIR, f)).mtime.getTime() }))
+        .sort((a, b) => b.time - a.time);
+    
+    return files.length > 0 ? path.join(SESSION_DIR, files[0].name) : null;
+}
+
+// Incremental Sync logic
+function syncLogs() {
+    console.log('Syncing logs...');
+    
+    // 1. Sync Project Log (Full re-read is fine for small MD file)
     try {
         const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
         const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
@@ -45,54 +72,72 @@ function syncLogs() {
         }
     } catch (e) { console.error('Project log sync failed', e); }
 
-    // 2. Sync LLM Interactions
+    // 2. Incremental Sync LLM Interactions
+    const sessionFile = getActiveSessionPath();
+    if (!sessionFile) return;
+
     try {
-        const raw = fs.readFileSync(LLM_JSONL_PATH, 'utf8');
-        const lines = raw.trim().split('\n').map(l => JSON.parse(l));
+        const stateKey = `offset:${sessionFile}`;
+        const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
+        const stats = fs.statSync(sessionFile);
         
-        const insertInteraction = db.prepare(`
-            INSERT OR IGNORE INTO llm_interactions (id, role, text, tokens, timestamp)
-            VALUES (?, ?, ?, ?, ?)
-        `);
+        if (stats.size > lastOffset) {
+            const fd = fs.openSync(sessionFile, 'r');
+            const buffer = Buffer.alloc(stats.size - lastOffset);
+            fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
+            fs.closeSync(fd);
 
-        const transaction = db.transaction((msgs) => {
-            for (const msg of msgs) {
-                insertInteraction.run(
-                    msg.id,
-                    msg.role,
-                    msg.text,
-                    msg.tokens,
-                    msg.timestamp
-                );
-            }
-        });
+            const newLines = buffer.toString('utf8').trim().split('\n').filter(l => l.trim());
+            
+            const insertInteraction = db.prepare(`
+                INSERT OR IGNORE INTO llm_interactions (id, role, text, tokens, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            `);
 
-        const history = lines
-            .filter(item => item.type === 'message')
-            .map(item => ({
-                id: item.id,
-                role: item.message.role,
-                text: item.message.content.find(c => c.type === 'text')?.text || "[Media/Tool]",
-                tokens: item.message.usage?.totalTokens || 0,
-                timestamp: item.timestamp
-            }));
+            const transaction = db.transaction((lines) => {
+                for (const line of lines) {
+                    try {
+                        const item = JSON.parse(line);
+                        if (item.type === 'message') {
+                            insertInteraction.run(
+                                item.id,
+                                item.message.role,
+                                item.message.content.find(c => c.type === 'text')?.text || "[Media/Tool]",
+                                item.message.usage?.totalTokens || 0,
+                                item.timestamp
+                            );
+                        }
+                    } catch (e) { /* Skip malformed lines */ }
+                }
+            });
 
-        transaction(history);
+            transaction(newLines);
+            db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
+            console.log(`Synced ${newLines.length} log lines.`);
+        }
     } catch (e) { console.error('LLM log sync failed', e); }
 }
 
+// Security Middleware
+const checkAuth = (req, res, next) => {
+    const key = req.headers['x-access-key'] || req.query.key;
+    if (ACCESS_KEY && key !== ACCESS_KEY) {
+        return res.status(403).json({ error: 'Access denied. Invalid key.' });
+    }
+    next();
+};
+
 app.use(express.static('public'));
 
-// API to get project audit log from DB
-app.get('/api/logs/project', (req, res) => {
+// Secure API Routes
+app.get('/api/logs/project', checkAuth, (req, res) => {
     const row = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
     res.json({ content: row ? row.content : 'No logs found.' });
 });
 
-// API to get session usage (still read from live JSON for accuracy)
-app.get('/api/logs/usage', (req, res) => {
+app.get('/api/logs/usage', checkAuth, (req, res) => {
     try {
-        const data = JSON.parse(fs.readFileSync(SESSION_JSON_PATH, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
         const session = data["agent:main:main"];
         res.json({
             model: session.model,
@@ -101,35 +146,27 @@ app.get('/api/logs/usage', (req, res) => {
             outputTokens: session.outputTokens,
             contextWindow: session.contextTokens
         });
-    } catch (e) {
-        res.status(500).json({ error: 'Could not read session usage' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Could not read usage' }); }
 });
 
-// API to get LLM message history from DB (with sorting and search)
-app.get('/api/logs/llm', (req, res) => {
+app.get('/api/logs/llm', checkAuth, (req, res) => {
     const search = req.query.q || '';
     const limit = parseInt(req.query.limit) || 50;
-    
     let query = 'SELECT * FROM llm_interactions';
     const params = [];
-
     if (search) {
         query += ' WHERE text LIKE ?';
         params.push(`%${search}%`);
     }
-
     query += ' ORDER BY timestamp DESC LIMIT ?';
     params.push(limit);
-
-    const history = db.prepare(query).all(...params);
-    res.json(history);
+    res.json(db.prepare(query).all(...params));
 });
 
-// Initial sync and scheduled sync
+// Initial sync and start server
 syncLogs();
-setInterval(syncLogs, 60000); // Sync every minute
+setInterval(syncLogs, 30000); 
 
 app.listen(PORT, () => {
-    console.log(`SQLite Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Hardened Log Viewer API running at http://localhost:${PORT}`);
 });

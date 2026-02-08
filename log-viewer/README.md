@@ -16,14 +16,18 @@ npm install
 ```
 
 ### 3. Configuration
-The application uses hardcoded absolute paths to the OpenClaw session files. Ensure the paths in `server.js` match your environment:
-- Project Log: `/home/locvv/.openclaw/workspace/prod-todolist/PROJECT_LOG.md`
-- LLM History: `/home/locvv/.openclaw/agents/main/sessions/<session-id>.jsonl`
+Create a `.env` file with the following:
+```env
+PORT=3001
+ACCESS_KEY=your-secure-key
+SESSION_DIR=/home/locvv/.openclaw/agents/main/sessions
+PROJECT_LOG_PATH=/home/locvv/.openclaw/workspace/prod-todolist/PROJECT_LOG.md
+```
 
 ### 4. Running the App
 Using PM2:
 ```bash
-pm2 start server.js --name "log-viewer"
+pm2 restart log-viewer || pm2 start server.js --name "log-viewer"
 pm2 save
 ```
 
@@ -36,10 +40,10 @@ sudo systemctl restart apache2
 ```
 
 ## 🏗 Architecture
-- **Frontend:** Single-page app using **Tailwind CSS** and **Vanilla JS**.
-- **Backend:** **Node.js/Express** server with a background sync engine.
-- **Database:** **SQLite** (`logs.db`) caches file-based logs for high-performance searching and filtering.
-- **Sync Engine:** Automatically ingests new entries from `PROJECT_LOG.md` and OpenClaw `.jsonl` files every 60 seconds.
+- **Incremental Sync:** Uses file offsets to only read new data from `.jsonl` logs, ensuring scalability.
+- **Dynamic Discovery:** Automatically resolves the active session path via `sessions.json`.
+- **Database:** **SQLite** (`logs.db`) caches all logs for high-performance searching.
+- **Security:** Dashboard access is protected by a secret **Access Key**.
 
 ## 📄 Documents
 - README: `/home/locvv/.openclaw/workspace/log-viewer/README.md`

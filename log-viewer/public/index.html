@@ -3,31 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DevFriend Log Viewer (SQLite)</title>
+    <title>DevFriend Log Viewer (Hardened)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <nav class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50">
         <div class="max-w-6xl mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
-                📜 Log Viewer <span class="text-xs bg-blue-600 px-2 py-1 rounded">SQLITE</span>
+                📜 Log Viewer <span class="text-xs bg-red-600 px-2 py-1 rounded">SECURE</span>
             </h1>
-            <div id="usage-stats" class="flex gap-4 text-sm text-gray-400">
-                <!-- Usage stats will load here -->
-            </div>
+            <div id="usage-stats" class="flex gap-4 text-sm text-gray-400"></div>
+            <button id="set-key-btn" class="text-xs text-gray-500 hover:text-white underline">Set Key</button>
         </div>
     </nav>
 
-    <main class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <!-- Project Audit Log -->
+    <main id="main-content" class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8" style="display:none;">
         <section>
-            <h2 class="text-lg font-semibold mb-4 text-blue-400">Audit Log (Markdown)</h2>
+            <h2 class="text-lg font-semibold mb-4 text-blue-400">Audit Log</h2>
             <div id="project-log" class="bg-gray-800 p-6 rounded-xl border border-gray-700 overflow-y-auto max-h-[700px] prose prose-invert max-w-none">
                 Loading...
             </div>
         </section>
 
-        <!-- LLM Interaction Log -->
         <section>
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-lg font-semibold text-purple-400">LLM Interactions</h2>
@@ -39,45 +36,74 @@
         </section>
     </main>
 
+    <div id="auth-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]" style="display:none;">
+        <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 w-80">
+            <h3 class="text-lg font-bold mb-4">Access Key Required</h3>
+            <input type="password" id="access-key-input" placeholder="Enter key..." class="w-full bg-gray-900 border border-gray-700 rounded p-2 mb-4">
+            <button id="save-key-btn" class="w-full bg-blue-600 p-2 rounded font-bold">Access Dashboard</button>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         const searchBox = document.getElementById('search-box');
+        const authModal = document.getElementById('auth-modal');
+        const mainContent = document.getElementById('main-content');
         let currentSearch = '';
 
+        function getHeaders() {
+            return { 'x-access-key': localStorage.getItem('log_access_key') };
+        }
+
         async function loadData() {
+            const key = localStorage.getItem('log_access_key');
+            if (!key) {
+                authModal.style.display = 'flex';
+                return;
+            }
+
             try {
-                // Load Stats
-                const usageRes = await fetch('/api/logs/usage');
+                const usageRes = await fetch(`/api/logs/usage`, { headers: getHeaders() });
+                if (usageRes.status === 403) throw new Error("Auth failed");
                 const usage = await usageRes.json();
                 document.getElementById('usage-stats').innerHTML = `
                     <span>Model: <b>${usage.model}</b></span>
-                    <span>Total Tokens: <b>${(usage.totalTokens/1000).toFixed(1)}k</b></span>
+                    <span>Tokens: <b>${(usage.totalTokens/1000).toFixed(1)}k</b></span>
                 `;
 
-                // Load Project Log
-                const projectRes = await fetch('/api/logs/project');
+                const projectRes = await fetch(`/api/logs/project`, { headers: getHeaders() });
                 const project = await projectRes.json();
                 document.getElementById('project-log').innerHTML = marked.parse(project.content);
 
-                // Load LLM History
-                const llmRes = await fetch(`/api/logs/llm?q=${encodeURIComponent(currentSearch)}`);
+                const llmRes = await fetch(`/api/logs/llm?q=${encodeURIComponent(currentSearch)}`, { headers: getHeaders() });
                 const history = await llmRes.json();
-                const llmContainer = document.getElementById('llm-log');
-                llmContainer.innerHTML = history.map(msg => `
+                document.getElementById('llm-log').innerHTML = history.map(msg => `
                     <div class="p-4 rounded-lg border ${msg.role === 'user' ? 'bg-gray-800 border-blue-900' : 'bg-gray-700 border-purple-900'}">
                         <div class="flex justify-between items-center mb-2">
-                            <span class="text-xs uppercase font-bold tracking-wider ${msg.role === 'user' ? 'text-blue-400' : 'text-purple-400'}">
-                                ${msg.role}
-                            </span>
+                            <span class="text-xs uppercase font-bold tracking-wider ${msg.role === 'user' ? 'text-blue-400' : 'text-purple-400'}">${msg.role}</span>
                             <span class="text-[10px] text-gray-500">${new Date(msg.timestamp).toLocaleString()}</span>
                         </div>
                         <div class="text-sm whitespace-pre-wrap font-mono">${msg.text.substring(0, 1000)}${msg.text.length > 1000 ? '...' : ''}</div>
                     </div>
                 `).join('');
+
+                mainContent.style.display = 'grid';
+                authModal.style.display = 'none';
             } catch (e) {
-                console.error("Failed to load logs", e);
+                authModal.style.display = 'flex';
+                mainContent.style.display = 'none';
             }
         }
+
+        document.getElementById('save-key-btn').onclick = () => {
+            localStorage.setItem('log_access_key', document.getElementById('access-key-input').value);
+            loadData();
+        };
+
+        document.getElementById('set-key-btn').onclick = () => {
+            localStorage.removeItem('log_access_key');
+            location.reload();
+        };
 
         searchBox.addEventListener('input', (e) => {
             currentSearch = e.target.value;
@@ -85,7 +111,7 @@
         });
 
         loadData();
-        setInterval(loadData, 30000); // Auto-refresh every 30s
+        setInterval(loadData, 30000);
     </script>
 </body>
 </html>
