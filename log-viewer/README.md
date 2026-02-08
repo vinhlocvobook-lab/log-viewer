@@ -43,5 +43,6 @@ sudo systemctl restart apache2
 
 ## 📄 Documents
 - README: `/home/locvv/.openclaw/workspace/log-viewer/README.md`
+- Audit Log: `/home/locvv/.openclaw/workspace/log-viewer/PROJECT_LOG.md`
 - Architecture: `/home/locvv/.openclaw/workspace/log-viewer/ARCHITECTURE.md`
 - Apache Config: `/home/locvv/.openclaw/workspace/log-viewer/apache-logs.conf`
