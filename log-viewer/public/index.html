@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DevFriend Log Viewer (Analytics)</title>
+    <title>DevFriend Log Viewer (Multi-Session)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -11,87 +11,115 @@
         .tool-call { background: #1e1b4b; border: 1px solid #312e81; font-family: monospace; padding: 10px; border-radius: 8px; margin: 10px 0; }
         .tool-result { background: #064e3b; border: 1px solid #065f46; font-family: monospace; padding: 10px; border-radius: 8px; margin: 10px 0; color: #10b981; }
         .system-event { background: #451a03; border: 1px solid #78350f; color: #fbbf24; padding: 8px; border-radius: 8px; font-size: 0.75rem; margin: 10px 0; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 10px; }
+        .active-session { background: #1e293b; border-left: 4px solid #3b82f6; }
     </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen font-sans">
+<body class="bg-gray-950 text-gray-100 min-h-screen font-sans flex flex-col">
+    <!-- Navbar -->
     <nav class="bg-gray-900 border-b border-gray-800 p-4 sticky top-0 z-50 shadow-2xl">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="max-w-[1600px] mx-auto flex justify-between items-center">
             <h1 class="text-xl font-black flex items-center gap-2 tracking-tighter">
-                📜 DEV_LOGS <span class="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-bold uppercase">Analytics</span>
+                📜 DEV_LOGS <span class="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold uppercase">Multi-Session</span>
             </h1>
-            <div id="usage-summary" class="flex gap-6 text-xs font-mono text-gray-400"></div>
-            <div class="flex gap-4">
-                <button id="show-system-btn" class="text-xs bg-gray-800 border border-gray-700 hover:bg-gray-700 px-3 py-1 rounded-lg transition">Brain Context</button>
-                <button id="logout-btn" class="text-xs text-gray-500 hover:text-white">Logout</button>
+            <div id="usage-summary" class="hidden md:flex gap-6 text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                <span id="nav-model"></span>
+                <span id="nav-tokens"></span>
+            </div>
+            <div class="flex gap-3">
+                <button id="show-system-btn" class="text-[10px] uppercase font-bold bg-gray-800 border border-gray-700 hover:bg-gray-700 px-3 py-1.5 rounded-lg transition">Brain Context</button>
+                <button id="logout-btn" class="text-[10px] uppercase font-bold text-gray-500 hover:text-white">Logout</button>
             </div>
         </div>
     </nav>
 
+    <div class="flex flex-1 overflow-hidden max-w-[1600px] mx-auto w-full">
+        <!-- Sidebar: Sessions -->
+        <aside class="w-64 border-r border-gray-800 flex flex-col bg-gray-900/50">
+            <div class="p-4 border-b border-gray-800">
+                <h2 class="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Active Sessions</h2>
+            </div>
+            <div id="session-list" class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                <!-- Sessions load here -->
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main id="main-content" class="flex-1 p-6 overflow-y-auto custom-scrollbar" style="display:none;">
+            <!-- Analytics Dashboard -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
+                <div class="lg:col-span-2 bg-gray-900/50 border border-gray-800 p-6 rounded-3xl shadow-xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest">Token Consumption History</h3>
+                        <span class="text-[10px] text-blue-500 font-mono">Main Session Only</span>
+                    </div>
+                    <div class="h-40 w-full">
+                        <canvas id="usageChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-gray-900 border border-gray-800 p-6 rounded-3xl shadow-xl flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute top-0 right-0 p-4 opacity-10">
+                        <svg class="w-20 h-20 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
+                    </div>
+                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Session Context</h3>
+                    <div id="active-session-label" class="text-lg font-black truncate text-blue-400 mb-1">Select a Session</div>
+                    <div id="active-session-id" class="text-[9px] font-mono text-gray-600 mb-4 truncate">...</div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-black/40 p-3 rounded-2xl border border-gray-800">
+                            <div class="text-[8px] text-gray-500 font-bold uppercase tracking-tighter">In</div>
+                            <div id="tokens-in" class="text-md font-mono font-bold">0</div>
+                        </div>
+                        <div class="bg-black/40 p-3 rounded-2xl border border-gray-800">
+                            <div class="text-[8px] text-gray-500 font-bold uppercase tracking-tighter">Out</div>
+                            <div id="tokens-out" class="text-md font-mono font-bold">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Content Row -->
+            <div class="grid grid-cols-1 xl:grid-cols-12 gap-10">
+                <!-- Timeline -->
+                <section class="xl:col-span-4">
+                    <h2 class="text-[10px] uppercase tracking-widest font-black mb-6 text-blue-500 border-b border-blue-900/30 pb-2">Project Milestones</h2>
+                    <div id="project-log" class="prose prose-invert prose-xs max-w-none text-gray-400 leading-relaxed">
+                        Loading...
+                    </div>
+                </section>
+
+                <!-- AI Interactions -->
+                <section class="xl:col-span-8">
+                    <div class="flex justify-between items-center mb-6 border-b border-purple-900/30 pb-2">
+                        <h2 class="text-[10px] uppercase tracking-widest font-black text-purple-500">Execution Stream</h2>
+                        <input type="text" id="search-box" placeholder="Search parameters or logs..." class="bg-gray-900 border border-gray-800 rounded-full px-4 py-1.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all w-64 font-mono">
+                    </div>
+                    <div id="llm-log" class="space-y-8">
+                        Initializing feed...
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
     <div id="system-modal" class="fixed inset-0 bg-black/95 hidden items-center justify-center z-[200] p-10">
         <div class="bg-gray-900 border border-gray-800 rounded-3xl w-full max-w-5xl max-h-full flex flex-col overflow-hidden shadow-2xl">
             <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
-                <h2 class="font-bold text-blue-400">System Prompt & Context</h2>
+                <h2 class="font-bold text-blue-400 uppercase tracking-widest text-xs">System Instructions</h2>
                 <button onclick="document.getElementById('system-modal').style.display='none'" class="text-gray-400 hover:text-white text-2xl">&times;</button>
             </div>
-            <div id="system-content" class="p-8 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap text-gray-400 bg-black/40"></div>
+            <div id="system-content" class="p-8 overflow-y-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-gray-500 bg-black/40"></div>
         </div>
     </div>
 
-    <main id="main-content" class="max-w-7xl mx-auto p-6" style="display:none;">
-        <!-- Analytics Row -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div class="lg:col-span-2 bg-gray-900/50 border border-gray-800 p-6 rounded-3xl shadow-xl">
-                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Token Growth</h3>
-                <div class="h-48 w-full">
-                    <canvas id="usageChart"></canvas>
-                </div>
-            </div>
-            <div class="bg-gray-900/50 border border-gray-800 p-6 rounded-3xl shadow-xl flex flex-col justify-center">
-                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 text-center">Active Model</h3>
-                <div id="model-name" class="text-2xl font-black text-center text-blue-500 mb-4">...</div>
-                <div class="grid grid-cols-2 gap-4 text-center">
-                    <div class="bg-black/30 p-3 rounded-2xl border border-gray-800">
-                        <div class="text-[10px] text-gray-500 font-bold uppercase">Input</div>
-                        <div id="tokens-in" class="text-lg font-mono font-bold">0</div>
-                    </div>
-                    <div class="bg-black/30 p-3 rounded-2xl border border-gray-800">
-                        <div class="text-[10px] text-gray-500 font-bold uppercase">Output</div>
-                        <div id="tokens-out" class="text-lg font-mono font-bold">0</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Logs Row -->
-        <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
-            <section class="xl:col-span-4">
-                <h2 class="text-sm uppercase tracking-widest font-bold mb-4 text-blue-500">Project Timeline</h2>
-                <div id="project-log" class="bg-gray-900/30 p-6 rounded-3xl border border-gray-800 overflow-y-auto max-h-[60vh] prose prose-invert prose-sm max-w-none shadow-inner custom-scrollbar">
-                    Loading...
-                </div>
-            </section>
-
-            <section class="xl:col-span-8">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-sm uppercase tracking-widest font-bold text-purple-500">Live AI Stream</h2>
-                    <input type="text" id="search-box" placeholder="Filter interactions..." class="bg-gray-900 border border-gray-800 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all w-64">
-                </div>
-                <div id="llm-log" class="space-y-6 overflow-y-auto max-h-[60vh] pr-4 custom-scrollbar">
-                    Initializing feed...
-                </div>
-            </section>
-        </div>
-    </main>
-
     <div id="auth-modal" class="fixed inset-0 bg-gray-950 flex items-center justify-center z-[100]" style="display:none;">
         <div class="bg-gray-900 p-10 rounded-3xl border border-gray-800 w-96 shadow-2xl">
-            <div class="text-4xl mb-6 text-center">🛡️</div>
-            <h3 class="text-xl font-black mb-2 text-center">Log Access</h3>
-            <p class="text-gray-500 text-xs text-center mb-8">Unauthorized access is restricted</p>
-            <input type="password" id="access-key-input" placeholder="ACCESS_KEY" class="w-full bg-black border border-gray-800 rounded-xl p-4 mb-6 text-center tracking-widest focus:border-blue-600 outline-none transition-all">
-            <button id="save-key-btn" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-black uppercase tracking-widest transition-all transform hover:scale-[1.02] active:scale-95 shadow-lg shadow-blue-900/20">Authenticate</button>
+            <div class="text-4xl mb-6 text-center">🛰️</div>
+            <h3 class="text-xl font-black mb-2 text-center">Command Access</h3>
+            <p class="text-gray-500 text-[10px] text-center mb-8 uppercase tracking-widest">Authorization Required</p>
+            <input type="password" id="access-key-input" placeholder="ACCESS_KEY" class="w-full bg-black border border-gray-800 rounded-xl p-4 mb-6 text-center tracking-widest focus:border-blue-600 outline-none transition-all text-sm">
+            <button id="save-key-btn" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-black uppercase tracking-widest transition-all transform hover:scale-[1.02] active:scale-95 shadow-lg shadow-blue-900/20 text-xs">Establish Link</button>
         </div>
     </div>
 
@@ -100,45 +128,43 @@
         const searchBox = document.getElementById('search-box');
         const authModal = document.getElementById('auth-modal');
         const mainContent = document.getElementById('main-content');
-        const systemModal = document.getElementById('system-modal');
+        const sessionList = document.getElementById('session-list');
         let currentSearch = '';
+        let currentSessionId = '';
         let lastSystemPrompt = '';
         let usageChart = null;
 
         function getHeaders() { return { 'x-access-key': localStorage.getItem('log_access_key') }; }
 
         function renderContent(item) {
-            if (item.type === 'text') return `<div class="text-sm leading-relaxed text-gray-300">${marked.parse(item.text)}</div>`;
-            if (item.type === 'thinking') return `<div class="thinking-block pl-4 text-xs italic text-gray-500">${marked.parse(item.thinking)}</div>`;
-            if (item.type === 'toolCall') return `<div class="tool-call"><div class="text-[9px] text-blue-400 font-black mb-2 tracking-widest uppercase">TOOL_EXEC: ${item.name}</div><pre class="text-[11px] text-blue-100/80 overflow-x-auto">${JSON.stringify(item.arguments, null, 2)}</pre></div>`;
-            if (item.type === 'toolResult') return `<div class="tool-result"><div class="text-[9px] text-green-400 font-black mb-2 tracking-widest uppercase">TERMINAL_OUT: ${item.toolName}</div><div class="text-xs font-mono break-all">${item.text}</div></div>`;
+            if (item.type === 'text') return `<div class="text-[13px] leading-relaxed text-gray-300 font-medium">${marked.parse(item.text)}</div>`;
+            if (item.type === 'thinking') return `<div class="thinking-block pl-4 text-[11px] italic text-gray-500">${marked.parse(item.thinking)}</div>`;
+            if (item.type === 'toolCall') return `<div class="tool-call"><div class="text-[8px] text-blue-400 font-black mb-2 tracking-widest uppercase opacity-50">CALLING_${item.name}</div><pre class="text-[10px] text-blue-100/70 overflow-x-auto">${JSON.stringify(item.arguments, null, 2)}</pre></div>`;
+            if (item.type === 'toolResult') return `<div class="tool-result"><div class="text-[8px] text-green-400 font-black mb-2 tracking-widest uppercase opacity-50">STDOUT_${item.toolName}</div><div class="text-[11px] font-mono break-all opacity-80">${item.text}</div></div>`;
             return '';
         }
 
         function updateChart(history) {
             const data = history.map(h => h.total_tokens);
-            const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString());
-            
             if (usageChart) {
-                usageChart.data.labels = labels;
+                usageChart.data.labels = history.map(h => "");
                 usageChart.data.datasets[0].data = data;
                 usageChart.update('none');
                 return;
             }
-
             const ctx = document.getElementById('usageChart').getContext('2d');
             usageChart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: history.map(h => ""),
                     datasets: [{
-                        label: 'Total Tokens',
                         data: data,
                         borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.05)',
                         fill: true,
                         tension: 0.4,
-                        pointRadius: 0
+                        pointRadius: 0,
+                        borderWidth: 2
                     }]
                 },
                 options: {
@@ -147,13 +173,34 @@
                     plugins: { legend: { display: false } },
                     scales: {
                         x: { display: false },
-                        y: { 
-                            grid: { color: '#1f2937' },
-                            ticks: { color: '#4b5563', font: { size: 9 } }
-                        }
+                        y: { grid: { display: false }, ticks: { display: false } }
                     }
                 }
             });
+        }
+
+        async function loadSessions() {
+            const res = await fetch('/api/sessions', { headers: getHeaders() });
+            const sessions = await res.json();
+            
+            if (!currentSessionId && sessions.length > 0) {
+                currentSessionId = sessions[0].id;
+            }
+
+            sessionList.innerHTML = sessions.map(s => `
+                <button onclick="selectSession('${s.id}', '${s.label}')" class="w-full text-left p-3 rounded-xl transition-all border border-transparent hover:bg-gray-800 ${s.id === currentSessionId ? 'active-session shadow-lg' : ''}">
+                    <div class="text-[11px] font-black truncate ${s.id === currentSessionId ? 'text-blue-400' : 'text-gray-400'}">${s.label}</div>
+                    <div class="text-[8px] font-mono text-gray-600 truncate">${s.id}</div>
+                </button>
+            `).join('');
+        }
+
+        function selectSession(id, label) {
+            currentSessionId = id;
+            document.getElementById('active-session-label').textContent = label;
+            document.getElementById('active-session-id').textContent = id;
+            loadData();
+            loadSessions();
         }
 
         async function loadData() {
@@ -165,36 +212,36 @@
                 if (usageRes.status === 403) throw new Error("Auth failed");
                 const usageData = await usageRes.json();
                 
-                const current = usageData.current;
-                document.getElementById('model-name').textContent = current.model;
-                document.getElementById('tokens-in').textContent = (current.inputTokens/1000).toFixed(1) + 'k';
-                document.getElementById('tokens-out').textContent = (current.outputTokens/1000).toFixed(1) + 'k';
-                lastSystemPrompt = current.systemPrompt;
-
+                const cur = usageData.current;
+                document.getElementById('nav-model').textContent = `MODEL: ${cur.model}`;
+                document.getElementById('nav-tokens').textContent = `USAGE: ${(cur.totalTokens/1000).toFixed(1)}K`;
+                document.getElementById('tokens-in').textContent = (cur.inputTokens/1000).toFixed(1) + 'k';
+                document.getElementById('tokens-out').textContent = (cur.outputTokens/1000).toFixed(1) + 'k';
+                lastSystemPrompt = cur.systemPrompt;
                 updateChart(usageData.history);
 
                 const projectRes = await fetch(`/api/logs/project`, { headers: getHeaders() });
                 const project = await projectRes.json();
                 document.getElementById('project-log').innerHTML = marked.parse(project.content);
 
-                const llmRes = await fetch(`/api/logs/llm?q=${encodeURIComponent(currentSearch)}`, { headers: getHeaders() });
+                const llmRes = await fetch(`/api/logs/llm?sid=${currentSessionId}&q=${encodeURIComponent(currentSearch)}`, { headers: getHeaders() });
                 const history = await llmRes.json();
                 
                 document.getElementById('llm-log').innerHTML = history.map(msg => {
-                    let roleClass = "border-gray-800 bg-gray-900/30";
+                    let roleClass = "border-gray-800 bg-gray-900/20";
                     let label = msg.role.toUpperCase();
-                    let labelColor = "text-gray-500";
+                    let labelColor = "text-gray-600";
                     
-                    if (msg.role === 'user') { roleClass = "border-blue-900/30 bg-blue-900/5 ring-1 ring-blue-500/10"; label = "👤 HUMAN_REQUEST"; labelColor = "text-blue-400"; }
-                    if (msg.role === 'system') { roleClass = "border-yellow-900/20 bg-yellow-950/5"; label = "⚙️ SYSTEM_EVENT"; labelColor = "text-yellow-500"; }
-                    if (msg.role === 'toolResult') { roleClass = "border-green-900/20 bg-green-950/5"; label = "✅ TOOL_RESULT"; labelColor = "text-green-500"; }
-                    if (msg.role === 'assistant') { label = "🤖 AI_RESPONSE"; labelColor = "text-purple-400"; }
+                    if (msg.role === 'user') { roleClass = "border-blue-900/20 bg-blue-900/5 ring-1 ring-blue-500/5 shadow-md"; label = "👤 REQUEST"; labelColor = "text-blue-500"; }
+                    if (msg.role === 'system') { roleClass = "border-yellow-900/20 bg-yellow-950/5"; label = "⚙️ EVENT"; labelColor = "text-yellow-600"; }
+                    if (msg.role === 'toolResult') { roleClass = "border-green-900/20 bg-green-950/5"; label = "✅ RESULT"; labelColor = "text-green-600"; }
+                    if (msg.role === 'assistant') { label = "🤖 RESPONSE"; labelColor = "text-purple-500"; }
 
                     return `
-                        <div class="p-6 rounded-3xl border ${roleClass} transition-all hover:border-gray-700 shadow-sm">
+                        <div class="p-6 rounded-3xl border ${roleClass} transition-all hover:border-gray-700">
                             <div class="flex justify-between items-center mb-4">
-                                <span class="text-[9px] uppercase font-black tracking-widest ${labelColor}">${label}</span>
-                                <span class="text-[9px] text-gray-600 font-mono">${new Date(msg.timestamp).toLocaleString()}</span>
+                                <span class="text-[8px] uppercase font-black tracking-[0.2em] ${labelColor}">${label}</span>
+                                <span class="text-[8px] text-gray-700 font-mono tracking-tighter">${new Date(msg.timestamp).toLocaleString()}</span>
                             </div>
                             <div class="space-y-3">${msg.content.map(renderContent).join('')}</div>
                         </div>
@@ -212,6 +259,7 @@
         document.getElementById('save-key-btn').onclick = () => {
             localStorage.setItem('log_access_key', document.getElementById('access-key-input').value);
             loadData();
+            loadSessions();
         };
 
         document.getElementById('logout-btn').onclick = () => {
@@ -229,8 +277,9 @@
             loadData();
         });
 
+        loadSessions();
         loadData();
-        setInterval(loadData, 15000);
+        setInterval(() => { loadSessions(); loadData(); }, 15000);
     </script>
 </body>
 </html>

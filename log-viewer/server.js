@@ -12,6 +12,7 @@ const SESSION_DIR = process.env.SESSION_DIR;
 
 const db = new Database('logs.db');
 
+// Updated schema for multi-session support
 db.exec(`
   CREATE TABLE IF NOT EXISTS project_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,10 +22,17 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS llm_interactions (
     id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
     role TEXT,
     content_json TEXT,
     tokens INTEGER,
     timestamp DATETIME
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    label TEXT,
+    updated_at DATETIME
   );
 
   CREATE TABLE IF NOT EXISTS usage_history (
@@ -41,16 +49,15 @@ db.exec(`
   );
 `);
 
-function getActiveSessionPath() {
-    try {
-        const sessionsJson = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
-        const activeSession = sessionsJson["agent:main:main"];
-        return activeSession?.sessionFile || null;
-    } catch (e) { return null; }
+// Migration: Add session_id column if it doesn't exist
+try {
+    db.prepare("SELECT session_id FROM llm_interactions LIMIT 1").get();
+} catch (e) {
+    db.exec("ALTER TABLE llm_interactions ADD COLUMN session_id TEXT DEFAULT 'main'");
 }
 
 function syncLogs() {
-    console.log('Syncing logs (Reliability Update)...');
+    console.log('Syncing logs (Multi-Session)...');
     
     try {
         // 1. Sync Project Log
@@ -64,88 +71,93 @@ function syncLogs() {
             }
         }
 
-        // 2. Sync Usage History
+        // 2. Discover & Sync Sessions
         const sessionJsonPath = path.join(SESSION_DIR, 'sessions.json');
         if (fs.existsSync(sessionJsonPath)) {
-            const data = JSON.parse(fs.readFileSync(sessionJsonPath, 'utf8'));
-            const session = data["agent:main:main"];
-            if (session) {
-                const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
-                if (!last || last.total_tokens !== session.totalTokens) {
-                    db.prepare('INSERT INTO usage_history (total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?)')
-                      .run(session.totalTokens, session.inputTokens, session.outputTokens);
+            const sessionsData = JSON.parse(fs.readFileSync(sessionJsonPath, 'utf8'));
+            const insertSession = db.prepare('INSERT OR REPLACE INTO sessions (id, label, updated_at) VALUES (?, ?, ?)');
+            
+            for (const [key, session] of Object.entries(sessionsData)) {
+                const sid = session.sessionId;
+                const label = session.origin?.label || key;
+                insertSession.run(sid, label, new Date(session.updatedAt).toISOString());
+
+                // Sync the specific session file
+                syncSessionFile(sid, session.sessionFile);
+                
+                // If it's the main session, update usage history
+                if (key === "agent:main:main") {
+                    const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
+                    if (!last || last.total_tokens !== session.totalTokens) {
+                        db.prepare('INSERT INTO usage_history (total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?)')
+                          .run(session.totalTokens, session.inputTokens, session.outputTokens);
+                    }
                 }
             }
         }
-
-        // 3. Incremental Sync LLM Interactions
-        const sessionFile = getActiveSessionPath();
-        if (sessionFile && fs.existsSync(sessionFile)) {
-            const stateKey = `offset:${sessionFile}`;
-            const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
-            const stats = fs.statSync(sessionFile);
-            
-            if (stats.size > lastOffset) {
-                const fd = fs.openSync(sessionFile, 'r');
-                const buffer = Buffer.alloc(stats.size - lastOffset);
-                fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
-                fs.closeSync(fd);
-
-                const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
-                const insertInteraction = db.prepare(`INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp) VALUES (?, ?, ?, ?, ?)`);
-
-                const transaction = db.transaction((logLines) => {
-                    for (const line of logLines) {
-                        try {
-                            const item = JSON.parse(line);
-                            let role = 'unknown';
-                            let contentArr = [];
-                            let tokens = 0;
-
-                            if (item.type === 'message') {
-                                role = item.message.role;
-                                tokens = item.message.usage?.totalTokens || 0;
-                                
-                                if (role === 'toolResult') {
-                                    // Normalize tool results for the UI
-                                    contentArr = [{ 
-                                        type: 'toolResult', 
-                                        toolName: item.message.toolName || 'tool', 
-                                        text: item.message.content.find(c => c.type === 'text')?.text || "Success" 
-                                    }];
-                                } else {
-                                    contentArr = item.message.content || [];
-                                }
-                            } else if (item.type === 'systemEvent') {
-                                role = 'system';
-                                contentArr = [{ type: 'text', text: item.text }];
-                            } else if (item.type === 'toolResult') {
-                                role = 'toolResult';
-                                contentArr = [{ 
-                                    type: 'toolResult', 
-                                    toolName: item.toolName, 
-                                    text: item.content?.[0]?.text || "Success" 
-                                }];
-                            }
-
-                            if (role !== 'unknown') {
-                                insertInteraction.run(
-                                    item.id || `evt-${item.timestamp || Date.now()}-${Math.random()}`, 
-                                    role, 
-                                    JSON.stringify(contentArr), 
-                                    tokens, 
-                                    item.timestamp || new Date().toISOString()
-                                );
-                            }
-                        } catch (e) { /* skip */ }
-                    }
-                });
-
-                transaction(lines);
-                db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
-            }
-        }
     } catch (e) { console.error('Global sync error', e); }
+}
+
+function syncSessionFile(sid, sessionFile) {
+    if (!sessionFile || !fs.existsSync(sessionFile)) return;
+
+    try {
+        const stateKey = `offset:${sid}:${sessionFile}`;
+        const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
+        const stats = fs.statSync(sessionFile);
+        
+        if (stats.size > lastOffset) {
+            const fd = fs.openSync(sessionFile, 'r');
+            const buffer = Buffer.alloc(stats.size - lastOffset);
+            fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
+            fs.closeSync(fd);
+
+            const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
+            const insertInteraction = db.prepare(`
+                INSERT OR IGNORE INTO llm_interactions (id, session_id, role, content_json, tokens, timestamp) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            `);
+
+            const transaction = db.transaction((logLines) => {
+                for (const line of logLines) {
+                    try {
+                        const item = JSON.parse(line);
+                        let role = 'unknown';
+                        let contentArr = [];
+                        let tokens = 0;
+
+                        if (item.type === 'message') {
+                            role = item.message.role;
+                            tokens = item.message.usage?.totalTokens || 0;
+                            contentArr = (role === 'toolResult') 
+                                ? [{ type: 'toolResult', toolName: item.message.toolName || 'tool', text: item.message.content.find(c => c.type === 'text')?.text || "Success" }]
+                                : item.message.content || [];
+                        } else if (item.type === 'systemEvent') {
+                            role = 'system';
+                            contentArr = [{ type: 'text', text: item.text }];
+                        } else if (item.type === 'toolResult') {
+                            role = 'toolResult';
+                            contentArr = [{ type: 'toolResult', toolName: item.toolName, text: item.content?.[0]?.text || "Success" }];
+                        }
+
+                        if (role !== 'unknown') {
+                            insertInteraction.run(
+                                item.id || `evt-${sid}-${item.timestamp || Date.now()}-${Math.random()}`, 
+                                sid,
+                                role, 
+                                JSON.stringify(contentArr), 
+                                tokens, 
+                                item.timestamp || new Date().toISOString()
+                            );
+                        }
+                    } catch (e) { /* skip */ }
+                }
+            });
+
+            transaction(lines);
+            db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
+        }
+    } catch (e) { console.error(`Sync failed for session ${sid}`, e); }
 }
 
 const checkAuth = (req, res, next) => {
@@ -159,6 +171,11 @@ app.use(express.static('public'));
 app.get('/api/logs/project', checkAuth, (req, res) => {
     const row = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
     res.json({ content: row ? row.content : 'No logs found.' });
+});
+
+app.get('/api/sessions', checkAuth, (req, res) => {
+    const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all();
+    res.json(rows);
 });
 
 app.get('/api/logs/usage', checkAuth, (req, res) => {
@@ -180,23 +197,32 @@ app.get('/api/logs/usage', checkAuth, (req, res) => {
 });
 
 app.get('/api/logs/llm', checkAuth, (req, res) => {
+    const sessionId = req.query.sid;
     const search = req.query.q || '';
     const limit = parseInt(req.query.limit) || 100;
-    let query = 'SELECT * FROM llm_interactions';
+    
+    let query = 'SELECT * FROM llm_interactions WHERE 1=1';
     const params = [];
+
+    if (sessionId) {
+        query += ' AND session_id = ?';
+        params.push(sessionId);
+    }
     if (search) {
-        query += ' WHERE content_json LIKE ?';
+        query += ' AND content_json LIKE ?';
         params.push(`%${search}%`);
     }
+
     query += ' ORDER BY timestamp DESC LIMIT ?';
     params.push(limit);
+    
     const rows = db.prepare(query).all(...params);
     res.json(rows.map(r => ({ ...r, content: JSON.parse(r.content_json || '[]') })));
 });
 
 syncLogs();
-setInterval(syncLogs, 30000); 
+setInterval(syncLogs, 15000); 
 
 app.listen(PORT, () => {
-    console.log(`Reliability Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Multi-Session Log Viewer API running at http://localhost:${PORT}`);
 });

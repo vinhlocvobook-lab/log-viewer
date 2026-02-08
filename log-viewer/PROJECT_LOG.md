@@ -41,13 +41,13 @@ This file tracks the development milestones, commands, and architectural decisio
 ### 📈 Usage Analytics & Dashboard
 - **Task:** Add visual analytics for token tracking.
 - **Branch:** `feat/usage-analytics`
-- **Improvements:**
-  - **Time-Series Tracking:** Added `usage_history` table to store periodic token snapshots.
-  - **Visualization:** Integrated **Chart.js** to display token growth trends.
-  - **UI Overhaul:** Redesigned the dashboard with a focus on metrics and readability.
 - **Result:** Professional dashboard providing both raw logs and strategic usage insights.
 
-### 🩹 Reliability & UI Patch
-- **Task:** Fix frontend JavaScript crashes and sync normalization.
-- **Decision:** Fixed a ReferenceError in `updateChart` (`r.timestamp` -> `h.timestamp`) and improved the server-side normalization of `toolResult` messages.
-- **Result:** Dashboard is now stable and correctly highlights tool outputs in green.
+### 🧵 Multi-Session Support
+- **Task:** Enable monitoring of multiple AI sessions (Main + Sub-agents).
+- **Branch:** `feat/multi-session`
+- **Improvements:**
+  - **Session Sidebar:** Added a navigation panel to switch between different agent runs.
+  - **Relational Data:** Updated SQLite schema to link logs to specific `session_id`s.
+  - **Background Worker Visibility:** The sync engine now tracks every `.jsonl` file registered in the system.
+- **Result:** Unified observability for complex, multi-agent coding tasks.
