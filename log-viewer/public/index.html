@@ -62,17 +62,17 @@
                     <div class="absolute top-0 right-0 p-4 opacity-10">
                         <svg class="w-20 h-20 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
                     </div>
-                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Session Context</h3>
+                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 text-gray-400">Current Session</h3>
                     <div id="active-session-label" class="text-lg font-black truncate text-blue-400 mb-1">Select a Session</div>
                     <div id="active-session-id" class="text-[9px] font-mono text-gray-600 mb-4 truncate">...</div>
                     <div class="grid grid-cols-2 gap-3">
                         <div class="bg-black/40 p-3 rounded-2xl border border-gray-800">
                             <div class="text-[8px] text-gray-500 font-bold uppercase tracking-tighter">In</div>
-                            <div id="tokens-in" class="text-md font-mono font-bold">0</div>
+                            <div id="tokens-in" class="text-md font-mono font-bold text-blue-300">0</div>
                         </div>
                         <div class="bg-black/40 p-3 rounded-2xl border border-gray-800">
                             <div class="text-[8px] text-gray-500 font-bold uppercase tracking-tighter">Out</div>
-                            <div id="tokens-out" class="text-md font-mono font-bold">0</div>
+                            <div id="tokens-out" class="text-md font-mono font-bold text-purple-300">0</div>
                         </div>
                     </div>
                 </div>
@@ -146,7 +146,8 @@
 
         function updateChart(history) {
             const data = history.map(h => h.total_tokens);
-            const labels = history.map(h => "");
+            const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+            
             if (usageChart) {
                 usageChart.data.labels = labels;
                 usageChart.data.datasets[0].data = data;
@@ -159,43 +160,65 @@
                 data: {
                     labels: labels,
                     datasets: [{
+                        label: 'Tokens',
                         data: data,
                         borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
                         fill: true,
-                        tension: 0.4,
-                        pointRadius: 0,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        pointBackgroundColor: '#3b82f6',
                         borderWidth: 2
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#111827',
+                            titleColor: '#9ca3af',
+                            bodyColor: '#3b82f6',
+                            borderColor: '#374151',
+                            borderWidth: 1
+                        }
+                    },
                     scales: {
-                        x: { display: false },
-                        y: { grid: { display: false }, ticks: { display: false } }
+                        x: { 
+                            ticks: { color: '#4b5563', font: { size: 8 }, maxRotation: 0 },
+                            grid: { display: false }
+                        },
+                        y: { 
+                            grid: { color: '#1f2937' }, 
+                            ticks: { color: '#4b5563', font: { size: 8 } } 
+                        }
                     }
                 }
             });
         }
 
         async function loadSessions() {
-            const res = await fetch('/api/sessions', { headers: getHeaders() });
-            const sessions = await res.json();
-            
-            if (!currentSessionId && sessions.length > 0) {
-                currentSessionId = sessions[0].id;
-                document.getElementById('active-session-label').textContent = sessions[0].label;
-                document.getElementById('active-session-id').textContent = sessions[0].id;
-            }
+            try {
+                const res = await fetch('/api/sessions', { headers: getHeaders() });
+                if (res.status === 403) return;
+                const sessions = await res.json();
+                
+                if (!currentSessionId && sessions.length > 0) {
+                    currentSessionId = sessions[0].id;
+                    document.getElementById('active-session-label').textContent = sessions[0].label;
+                    document.getElementById('active-session-id').textContent = sessions[0].id;
+                }
 
-            sessionList.innerHTML = sessions.map(s => `
-                <button onclick="selectSession('${s.id}', '${s.label}')" class="w-full text-left p-3 rounded-xl transition-all border border-transparent hover:bg-gray-800 ${s.id === currentSessionId ? 'active-session shadow-lg' : ''}">
-                    <div class="text-[11px] font-black truncate ${s.id === currentSessionId ? 'text-blue-400' : 'text-gray-400'}">${s.label}</div>
-                    <div class="text-[8px] font-mono text-gray-600 truncate">${s.id}</div>
-                </button>
-            `).join('');
+                sessionList.innerHTML = sessions.map(s => `
+                    <button onclick="selectSession('${s.id}', '${s.label}')" class="w-full text-left p-3 rounded-xl transition-all border border-transparent hover:bg-gray-800 ${s.id === currentSessionId ? 'active-session shadow-lg' : ''}">
+                        <div class="text-[11px] font-black truncate ${s.id === currentSessionId ? 'text-blue-400' : 'text-gray-400'}">${s.label}</div>
+                        <div class="text-[8px] font-mono text-gray-600 truncate">${s.id}</div>
+                    </button>
+                `).join('');
+            } catch (e) {}
         }
 
         function selectSession(id, label) {
@@ -221,7 +244,10 @@
                 document.getElementById('tokens-in').textContent = (cur.inputTokens/1000).toFixed(1) + 'k';
                 document.getElementById('tokens-out').textContent = (cur.outputTokens/1000).toFixed(1) + 'k';
                 lastSystemPrompt = cur.systemPrompt;
-                updateChart(usageData.history);
+                
+                if (usageData.history && usageData.history.length > 0) {
+                    updateChart(usageData.history);
+                }
 
                 const projectRes = await fetch(`/api/logs/project`, { headers: getHeaders() });
                 const project = await projectRes.json();
