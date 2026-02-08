@@ -116,11 +116,11 @@
         }
 
         function updateChart(history) {
-            const labels = history.map(h => new Date(r.timestamp).toLocaleTimeString());
             const data = history.map(h => h.total_tokens);
+            const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString());
             
             if (usageChart) {
-                usageChart.data.labels = history.map(h => "");
+                usageChart.data.labels = labels;
                 usageChart.data.datasets[0].data = data;
                 usageChart.update('none');
                 return;

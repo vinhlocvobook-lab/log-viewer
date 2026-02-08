@@ -50,81 +50,102 @@ function getActiveSessionPath() {
 }
 
 function syncLogs() {
-    console.log('Syncing logs (Analytics Update)...');
+    console.log('Syncing logs (Reliability Update)...');
     
-    // 1. Sync Project Log
     try {
-        const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
-        const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
-        if (!existing) {
-            db.prepare('INSERT INTO project_logs (content) VALUES (?)').run(content);
-        } else if (existing.content !== content) {
-            db.prepare('UPDATE project_logs SET content = ?, last_updated = CURRENT_TIMESTAMP').run(content);
-        }
-    } catch (e) { console.error('Project log sync failed', e); }
-
-    // 2. Sync Usage History
-    try {
-        const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'sessions.json'), 'utf8'));
-        const session = data["agent:main:main"];
-        if (session) {
-            const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
-            if (!last || last.total_tokens !== session.totalTokens) {
-                db.prepare('INSERT INTO usage_history (total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?)')
-                  .run(session.totalTokens, session.inputTokens, session.outputTokens);
+        // 1. Sync Project Log
+        if (fs.existsSync(PROJECT_LOG_PATH)) {
+            const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
+            const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
+            if (!existing) {
+                db.prepare('INSERT INTO project_logs (content) VALUES (?)').run(content);
+            } else if (existing.content !== content) {
+                db.prepare('UPDATE project_logs SET content = ?, last_updated = CURRENT_TIMESTAMP').run(content);
             }
         }
-    } catch (e) { console.error('Usage sync failed', e); }
 
-    // 3. Incremental Sync
-    const sessionFile = getActiveSessionPath();
-    if (!sessionFile || !fs.existsSync(sessionFile)) return;
-
-    try {
-        const stateKey = `offset:${sessionFile}`;
-        const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
-        const stats = fs.statSync(sessionFile);
-        
-        if (stats.size > lastOffset) {
-            const fd = fs.openSync(sessionFile, 'r');
-            const buffer = Buffer.alloc(stats.size - lastOffset);
-            fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
-            fs.closeSync(fd);
-
-            const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
-            const insertInteraction = db.prepare(`INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp) VALUES (?, ?, ?, ?, ?)`);
-
-            const transaction = db.transaction((logLines) => {
-                for (const line of logLines) {
-                    try {
-                        const item = JSON.parse(line);
-                        let role = 'unknown';
-                        let contentArr = [];
-                        let tokens = 0;
-
-                        if (item.type === 'message') {
-                            role = item.message.role;
-                            contentArr = item.message.content || [];
-                            tokens = item.message.usage?.totalTokens || 0;
-                        } else if (item.type === 'systemEvent') {
-                            role = 'system';
-                            contentArr = [{ type: 'text', text: item.text }];
-                        } else if (item.type === 'toolResult') {
-                            role = 'toolResult';
-                            contentArr = [{ type: 'toolResult', toolName: item.toolName, text: item.content?.[0]?.text || "Success" }];
-                        }
-
-                        if (role !== 'unknown') {
-                            insertInteraction.run(item.id || `evt-${item.timestamp}-${Math.random()}`, role, JSON.stringify(contentArr), tokens, item.timestamp);
-                        }
-                    } catch (e) { /* skip */ }
+        // 2. Sync Usage History
+        const sessionJsonPath = path.join(SESSION_DIR, 'sessions.json');
+        if (fs.existsSync(sessionJsonPath)) {
+            const data = JSON.parse(fs.readFileSync(sessionJsonPath, 'utf8'));
+            const session = data["agent:main:main"];
+            if (session) {
+                const last = db.prepare('SELECT total_tokens FROM usage_history ORDER BY timestamp DESC LIMIT 1').get();
+                if (!last || last.total_tokens !== session.totalTokens) {
+                    db.prepare('INSERT INTO usage_history (total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?)')
+                      .run(session.totalTokens, session.inputTokens, session.outputTokens);
                 }
-            });
-
-            transaction(lines);
-            db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
+            }
         }
-    } catch (e) { console.error('LLM log sync failed', e); }
+
+        // 3. Incremental Sync LLM Interactions
+        const sessionFile = getActiveSessionPath();
+        if (sessionFile && fs.existsSync(sessionFile)) {
+            const stateKey = `offset:${sessionFile}`;
+            const lastOffset = parseInt(db.prepare('SELECT value FROM sync_state WHERE key = ?').get(stateKey)?.value || '0');
+            const stats = fs.statSync(sessionFile);
+            
+            if (stats.size > lastOffset) {
+                const fd = fs.openSync(sessionFile, 'r');
+                const buffer = Buffer.alloc(stats.size - lastOffset);
+                fs.readSync(fd, buffer, 0, buffer.length, lastOffset);
+                fs.closeSync(fd);
+
+                const lines = buffer.toString('utf8').split('\n').filter(l => l.trim());
+                const insertInteraction = db.prepare(`INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp) VALUES (?, ?, ?, ?, ?)`);
+
+                const transaction = db.transaction((logLines) => {
+                    for (const line of logLines) {
+                        try {
+                            const item = JSON.parse(line);
+                            let role = 'unknown';
+                            let contentArr = [];
+                            let tokens = 0;
+
+                            if (item.type === 'message') {
+                                role = item.message.role;
+                                tokens = item.message.usage?.totalTokens || 0;
+                                
+                                if (role === 'toolResult') {
+                                    // Normalize tool results for the UI
+                                    contentArr = [{ 
+                                        type: 'toolResult', 
+                                        toolName: item.message.toolName || 'tool', 
+                                        text: item.message.content.find(c => c.type === 'text')?.text || "Success" 
+                                    }];
+                                } else {
+                                    contentArr = item.message.content || [];
+                                }
+                            } else if (item.type === 'systemEvent') {
+                                role = 'system';
+                                contentArr = [{ type: 'text', text: item.text }];
+                            } else if (item.type === 'toolResult') {
+                                role = 'toolResult';
+                                contentArr = [{ 
+                                    type: 'toolResult', 
+                                    toolName: item.toolName, 
+                                    text: item.content?.[0]?.text || "Success" 
+                                }];
+                            }
+
+                            if (role !== 'unknown') {
+                                insertInteraction.run(
+                                    item.id || `evt-${item.timestamp || Date.now()}-${Math.random()}`, 
+                                    role, 
+                                    JSON.stringify(contentArr), 
+                                    tokens, 
+                                    item.timestamp || new Date().toISOString()
+                                );
+                            }
+                        } catch (e) { /* skip */ }
+                    }
+                });
+
+                transaction(lines);
+                db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
+            }
+        }
+    } catch (e) { console.error('Global sync error', e); }
 }
 
 const checkAuth = (req, res, next) => {
@@ -177,5 +198,5 @@ syncLogs();
 setInterval(syncLogs, 30000); 
 
 app.listen(PORT, () => {
-    console.log(`Analytics Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Reliability Log Viewer API running at http://localhost:${PORT}`);
 });
