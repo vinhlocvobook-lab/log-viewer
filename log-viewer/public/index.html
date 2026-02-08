@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DevFriend Log Viewer (Hardened)</title>
+    <title>DevFriend Log Viewer (Rich)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .thinking-block { border-left: 3px solid #4b5563; font-style: italic; color: #9ca3af; }
+        .tool-call { background: #1e1b4b; border: 1px solid #312e81; font-family: monospace; }
+        .tool-result { background: #064e3b; border: 1px solid #065f46; font-family: monospace; }
+    </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <nav class="bg-gray-800 border-b border-gray-700 p-4 sticky top-0 z-50">
         <div class="max-w-6xl mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
-                📜 Log Viewer <span class="text-xs bg-red-600 px-2 py-1 rounded">SECURE</span>
+                📜 Log Viewer <span class="text-xs bg-purple-600 px-2 py-1 rounded">RICH PARSING</span>
             </h1>
             <div id="usage-stats" class="flex gap-4 text-sm text-gray-400"></div>
             <button id="set-key-btn" class="text-xs text-gray-500 hover:text-white underline">Set Key</button>
@@ -18,19 +23,21 @@
     </nav>
 
     <main id="main-content" class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8" style="display:none;">
+        <!-- Left: Audit Log -->
         <section>
-            <h2 class="text-lg font-semibold mb-4 text-blue-400">Audit Log</h2>
-            <div id="project-log" class="bg-gray-800 p-6 rounded-xl border border-gray-700 overflow-y-auto max-h-[700px] prose prose-invert max-w-none">
+            <h2 class="text-lg font-semibold mb-4 text-blue-400">Project Audit Log</h2>
+            <div id="project-log" class="bg-gray-800 p-6 rounded-xl border border-gray-700 overflow-y-auto max-h-[800px] prose prose-invert max-w-none">
                 Loading...
             </div>
         </section>
 
+        <!-- Right: Interactive LLM Log -->
         <section>
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-lg font-semibold text-purple-400">LLM Interactions</h2>
-                <input type="text" id="search-box" placeholder="Search logs..." class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm focus:outline-none focus:border-purple-500">
+                <h2 class="text-lg font-semibold text-purple-400">Message Streams</h2>
+                <input type="text" id="search-box" placeholder="Search content..." class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm focus:outline-none focus:border-purple-500">
             </div>
-            <div id="llm-log" class="space-y-4 overflow-y-auto max-h-[700px] pr-2">
+            <div id="llm-log" class="space-y-6 overflow-y-auto max-h-[800px] pr-2">
                 Loading...
             </div>
         </section>
@@ -38,9 +45,9 @@
 
     <div id="auth-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]" style="display:none;">
         <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 w-80">
-            <h3 class="text-lg font-bold mb-4">Access Key Required</h3>
-            <input type="password" id="access-key-input" placeholder="Enter key..." class="w-full bg-gray-900 border border-gray-700 rounded p-2 mb-4">
-            <button id="save-key-btn" class="w-full bg-blue-600 p-2 rounded font-bold">Access Dashboard</button>
+            <h3 class="text-lg font-bold mb-4 text-center">🔐 Security Key</h3>
+            <input type="password" id="access-key-input" placeholder="Enter access key..." class="w-full bg-gray-900 border border-gray-700 rounded p-2 mb-4">
+            <button id="save-key-btn" class="w-full bg-blue-600 hover:bg-blue-500 p-2 rounded font-bold transition">Unlock Dashboard</button>
         </div>
     </div>
 
@@ -55,12 +62,35 @@
             return { 'x-access-key': localStorage.getItem('log_access_key') };
         }
 
+        function renderContent(item) {
+            if (item.type === 'text') {
+                return `<div class="text-sm leading-relaxed">${marked.parse(item.text)}</div>`;
+            }
+            if (item.type === 'thinking') {
+                return `<div class="thinking-block pl-4 my-2 text-xs">${marked.parse(item.thinking)}</div>`;
+            }
+            if (item.type === 'toolCall') {
+                return `
+                    <div class="tool-call p-3 rounded-md my-2">
+                        <div class="text-[10px] text-indigo-300 font-bold mb-1 uppercase tracking-tighter">Tool Call: ${item.name}</div>
+                        <div class="text-xs text-indigo-100">${JSON.stringify(item.arguments, null, 2)}</div>
+                    </div>
+                `;
+            }
+            if (item.type === 'toolResult') {
+                return `
+                    <div class="tool-result p-3 rounded-md my-2">
+                        <div class="text-[10px] text-green-300 font-bold mb-1 uppercase tracking-tighter">Tool Result: ${item.toolName}</div>
+                        <div class="text-xs text-green-500 truncate">${item.text}</div>
+                    </div>
+                `;
+            }
+            return '';
+        }
+
         async function loadData() {
             const key = localStorage.getItem('log_access_key');
-            if (!key) {
-                authModal.style.display = 'flex';
-                return;
-            }
+            if (!key) { authModal.style.display = 'flex'; return; }
 
             try {
                 const usageRes = await fetch(`/api/logs/usage`, { headers: getHeaders() });
@@ -68,7 +98,7 @@
                 const usage = await usageRes.json();
                 document.getElementById('usage-stats').innerHTML = `
                     <span>Model: <b>${usage.model}</b></span>
-                    <span>Tokens: <b>${(usage.totalTokens/1000).toFixed(1)}k</b></span>
+                    <span>Usage: <b>${(usage.totalTokens/1000).toFixed(1)}k</b></span>
                 `;
 
                 const projectRes = await fetch(`/api/logs/project`, { headers: getHeaders() });
@@ -77,19 +107,25 @@
 
                 const llmRes = await fetch(`/api/logs/llm?q=${encodeURIComponent(currentSearch)}`, { headers: getHeaders() });
                 const history = await llmRes.json();
+                
                 document.getElementById('llm-log').innerHTML = history.map(msg => `
-                    <div class="p-4 rounded-lg border ${msg.role === 'user' ? 'bg-gray-800 border-blue-900' : 'bg-gray-700 border-purple-900'}">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="text-xs uppercase font-bold tracking-wider ${msg.role === 'user' ? 'text-blue-400' : 'text-purple-400'}">${msg.role}</span>
-                            <span class="text-[10px] text-gray-500">${new Date(msg.timestamp).toLocaleString()}</span>
+                    <div class="p-5 rounded-xl border ${msg.role === 'user' ? 'bg-gray-800 border-blue-900 shadow-lg' : msg.role === 'toolResult' ? 'bg-black/20 border-green-900' : 'bg-gray-800/50 border-gray-700'}">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-[10px] uppercase font-black tracking-widest ${msg.role === 'user' ? 'text-blue-400' : msg.role === 'toolResult' ? 'text-green-400' : 'text-purple-400'}">
+                                ${msg.role}
+                            </span>
+                            <span class="text-[10px] text-gray-600 font-mono">${new Date(msg.timestamp).toLocaleTimeString()}</span>
                         </div>
-                        <div class="text-sm whitespace-pre-wrap font-mono">${msg.text.substring(0, 1000)}${msg.text.length > 1000 ? '...' : ''}</div>
+                        <div class="space-y-2">
+                            ${msg.content.map(renderContent).join('')}
+                        </div>
                     </div>
                 `).join('');
 
                 mainContent.style.display = 'grid';
                 authModal.style.display = 'none';
             } catch (e) {
+                console.error(e);
                 authModal.style.display = 'flex';
                 mainContent.style.display = 'none';
             }

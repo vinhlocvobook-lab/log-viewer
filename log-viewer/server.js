@@ -14,7 +14,7 @@ const SESSION_DIR = process.env.SESSION_DIR;
 // Initialize SQLite DB
 const db = new Database('logs.db');
 
-// Create tables
+// Create tables (Updated for rich content)
 db.exec(`
   CREATE TABLE IF NOT EXISTS project_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +25,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS llm_interactions (
     id TEXT PRIMARY KEY,
     role TEXT,
-    text TEXT,
+    content_json TEXT, -- Stores the full content array as JSON
     tokens INTEGER,
     timestamp DATETIME
   );
@@ -36,6 +36,12 @@ db.exec(`
   );
 `);
 
+// Migration: Add content_json if it doesn't exist
+const columns = db.prepare("PRAGMA table_info(llm_interactions)").all();
+if (!columns.find(c => c.name === 'content_json')) {
+    db.exec('ALTER TABLE llm_interactions ADD COLUMN content_json TEXT');
+}
+
 // Dynamic Discovery: Find the current active session file
 function getActiveSessionPath() {
     try {
@@ -44,24 +50,15 @@ function getActiveSessionPath() {
         if (activeSession && activeSession.sessionFile) {
             return activeSession.sessionFile;
         }
-    } catch (e) {
-        console.error('Failed to discover active session via sessions.json');
-    }
-    
-    // Fallback: most recently modified .jsonl file
-    const files = fs.readdirSync(SESSION_DIR)
-        .filter(f => f.endsWith('.jsonl'))
-        .map(f => ({ name: f, time: fs.statSync(path.join(SESSION_DIR, f)).mtime.getTime() }))
-        .sort((a, b) => b.time - a.time);
-    
-    return files.length > 0 ? path.join(SESSION_DIR, files[0].name) : null;
+    } catch (e) { console.error('Discovery failed', e); }
+    return null;
 }
 
-// Incremental Sync logic
+// Sync logic
 function syncLogs() {
-    console.log('Syncing logs...');
+    console.log('Syncing logs (Rich Parsing)...');
     
-    // 1. Sync Project Log (Full re-read is fine for small MD file)
+    // 1. Sync Project Log
     try {
         const content = fs.readFileSync(PROJECT_LOG_PATH, 'utf8');
         const existing = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
@@ -90,7 +87,7 @@ function syncLogs() {
             const newLines = buffer.toString('utf8').trim().split('\n').filter(l => l.trim());
             
             const insertInteraction = db.prepare(`
-                INSERT OR IGNORE INTO llm_interactions (id, role, text, tokens, timestamp)
+                INSERT OR IGNORE INTO llm_interactions (id, role, content_json, tokens, timestamp)
                 VALUES (?, ?, ?, ?, ?)
             `);
 
@@ -99,37 +96,44 @@ function syncLogs() {
                     try {
                         const item = JSON.parse(line);
                         if (item.type === 'message') {
+                            // Normalize content for display
+                            let contentArr = item.message.content || [];
+                            
+                            // If it's a tool result, wrap it into a readable format for the UI
+                            if (item.message.role === 'toolResult') {
+                                contentArr = [{
+                                    type: 'toolResult',
+                                    toolName: item.message.toolName,
+                                    text: item.message.content.find(c => c.type === 'text')?.text || "Success"
+                                }];
+                            }
+
                             insertInteraction.run(
                                 item.id,
                                 item.message.role,
-                                item.message.content.find(c => c.type === 'text')?.text || "[Media/Tool]",
+                                JSON.stringify(contentArr),
                                 item.message.usage?.totalTokens || 0,
                                 item.timestamp
                             );
                         }
-                    } catch (e) { /* Skip malformed lines */ }
+                    } catch (e) { console.error('Line parse error', e); }
                 }
             });
 
             transaction(newLines);
             db.prepare('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)').run(stateKey, stats.size.toString());
-            console.log(`Synced ${newLines.length} log lines.`);
         }
     } catch (e) { console.error('LLM log sync failed', e); }
 }
 
-// Security Middleware
 const checkAuth = (req, res, next) => {
     const key = req.headers['x-access-key'] || req.query.key;
-    if (ACCESS_KEY && key !== ACCESS_KEY) {
-        return res.status(403).json({ error: 'Access denied. Invalid key.' });
-    }
+    if (ACCESS_KEY && key !== ACCESS_KEY) return res.status(403).json({ error: 'Access denied' });
     next();
 };
 
 app.use(express.static('public'));
 
-// Secure API Routes
 app.get('/api/logs/project', checkAuth, (req, res) => {
     const row = db.prepare('SELECT content FROM project_logs LIMIT 1').get();
     res.json({ content: row ? row.content : 'No logs found.' });
@@ -143,10 +147,9 @@ app.get('/api/logs/usage', checkAuth, (req, res) => {
             model: session.model,
             totalTokens: session.totalTokens,
             inputTokens: session.inputTokens,
-            outputTokens: session.outputTokens,
-            contextWindow: session.contextTokens
+            outputTokens: session.outputTokens
         });
-    } catch (e) { res.status(500).json({ error: 'Could not read usage' }); }
+    } catch (e) { res.status(500).json({ error: 'Read error' }); }
 });
 
 app.get('/api/logs/llm', checkAuth, (req, res) => {
@@ -155,18 +158,23 @@ app.get('/api/logs/llm', checkAuth, (req, res) => {
     let query = 'SELECT * FROM llm_interactions';
     const params = [];
     if (search) {
-        query += ' WHERE text LIKE ?';
+        query += ' WHERE content_json LIKE ?';
         params.push(`%${search}%`);
     }
     query += ' ORDER BY timestamp DESC LIMIT ?';
     params.push(limit);
-    res.json(db.prepare(query).all(...params));
+    
+    const rows = db.prepare(query).all(...params);
+    const history = rows.map(r => ({
+        ...r,
+        content: JSON.parse(r.content_json || '[]')
+    }));
+    res.json(history);
 });
 
-// Initial sync and start server
 syncLogs();
 setInterval(syncLogs, 30000); 
 
 app.listen(PORT, () => {
-    console.log(`Hardened Log Viewer API running at http://localhost:${PORT}`);
+    console.log(`Rich Log Viewer API running at http://localhost:${PORT}`);
 });

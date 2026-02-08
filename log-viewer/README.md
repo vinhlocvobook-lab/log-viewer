@@ -40,6 +40,7 @@ sudo systemctl restart apache2
 ```
 
 ## 🏗 Architecture
+- **Rich Content Engine:** Parses complex JSONL structures to separate normal text from **Thinking**, **Tool Calls**, and **Tool Results**.
 - **Incremental Sync:** Uses file offsets to only read new data from `.jsonl` logs, ensuring scalability.
 - **Dynamic Discovery:** Automatically resolves the active session path via `sessions.json`.
 - **Database:** **SQLite** (`logs.db`) caches all logs for high-performance searching.

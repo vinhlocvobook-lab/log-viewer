@@ -27,8 +27,13 @@ This file tracks the development milestones, commands, and architectural decisio
   - **Dynamic Discovery:** System now automatically finds the active session file.
   - **Incremental Sync:** Replaced full-file reads with offset-based streaming for performance.
   - **Auth Shield:** Added an mandatory Access Key to protect log data.
-- **Commands:**
-  - `git checkout -b feat/hardening-and-scaling`
-  - `npm install dotenv`
-  - `pm2 restart log-viewer`
 - **Result:** Enterprise-grade logging system ready for large session files.
+
+### 🛠️ Rich Content Parsing
+- **Task:** Parse and display internal AI logic (Thinking, Tool Calls, Tool Results).
+- **Branch:** `feat/rich-parsing`
+- **Improvements:**
+  - **Content Serialization:** Database now stores full message structures as JSON.
+  - **UI Visualization:** Created specialized UI blocks for "Thinking" (italic/grey), "Tool Calls" (blue), and "Tool Results" (green).
+  - **Search scaling:** Search now queries across the entire serialized message content.
+- **Result:** Full transparency into what the AI is "thinking" and what commands it is running.
