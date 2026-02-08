@@ -34,11 +34,7 @@ This file tracks the development milestones, commands, and architectural decisio
 - **Branch:** `feat/rich-parsing`
 - **Result:** Full transparency into what the AI is "thinking" and what commands it is running.
 
-### 🔍 Debug Transparency Update
-- **Task:** Expose user requests, system prompts, and background events.
-- **Branch:** `feat/debug-transparency`
-- **Improvements:**
-  - **Human Request Visibility:** Highlighted user messages in blue for easy scanning.
-  - **System Prompt Viewer:** Added a dedicated modal to see the AI's current instructions.
-  - **Event Support:** Now captures `systemEvent` (e.g. background tasks) and `toolResult` (raw output).
-- **Result:** Complete "end-to-end" visibility of the AI's context and conversation flow.
+### 🔒 Security & Source Control Fix
+- **Task:** Remove sensitive `.env` file from GitHub history.
+- **Decision:** Untracked `.env` using `git rm --cached` and provided `.env.example` for setup.
+- **Result:** Secrets are no longer pushed to the repository.

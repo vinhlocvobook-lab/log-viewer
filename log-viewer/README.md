@@ -16,12 +16,16 @@ npm install
 ```
 
 ### 3. Configuration
-Create a `.env` file with the following:
+Copy the example environment file and update your paths and security key:
+```bash
+cp .env.example .env
+```
+Default `.env` values:
 ```env
 PORT=3001
 ACCESS_KEY=your-secure-key
-SESSION_DIR=/home/locvv/.openclaw/agents/main/sessions
-PROJECT_LOG_PATH=/home/locvv/.openclaw/workspace/prod-todolist/PROJECT_LOG.md
+SESSION_DIR=/path/to/openclaw/sessions
+PROJECT_LOG_PATH=/path/to/PROJECT_LOG.md
 ```
 
 ### 4. Running the App
